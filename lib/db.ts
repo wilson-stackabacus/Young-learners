@@ -1,6 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaLibSQL } from "@prisma/adapter-libsql";
-import { createClient } from "@libsql/client";
+// The `/web` entry is the HTTP-only libSQL client: no native bindings, which is
+// the reliable choice on Vercel's serverless runtime. It speaks to remote Turso
+// (libsql://) over HTTPS just fine.
+import { createClient } from "@libsql/client/web";
 
 // Reuse a single PrismaClient across hot-reloads in dev to avoid exhausting connections.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
