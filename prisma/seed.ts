@@ -21,6 +21,21 @@ const QUESTS = [
   { slug: "perfect-streak-5", title: "Sharp Shooter", description: "Get a correct-answer streak of 5 problems in a row.", type: "correct_streak", targetValue: 5, xpReward: 200 }
 ];
 
+const SUBJECT_FIRST_STAGE: Record<string, number> = { math: 1, english: 1001, reading: 2001, science: 3001 };
+
+async function seedSubjectProgress(userId: string, mathStage: number, mathXp: number, streak: number) {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = [
+    { subject: "math", currentStage: mathStage, totalXp: mathXp, currentStreak: streak },
+    { subject: "english", currentStage: SUBJECT_FIRST_STAGE.english + Math.min(8, Math.floor(mathStage / 3)), totalXp: Math.floor(mathXp * 0.4), currentStreak: Math.max(0, streak - 1) },
+    { subject: "reading", currentStage: SUBJECT_FIRST_STAGE.reading + Math.min(6, Math.floor(mathStage / 4)), totalXp: Math.floor(mathXp * 0.25), currentStreak: Math.max(0, streak - 2) },
+    { subject: "science", currentStage: SUBJECT_FIRST_STAGE.science + Math.min(6, Math.floor(mathStage / 4)), totalXp: Math.floor(mathXp * 0.3), currentStreak: Math.max(0, streak - 1) },
+  ];
+  for (const r of rows) {
+    await prisma.subjectProgress.create({ data: { userId, ...r, longestStreak: r.currentStreak + 2, lastActiveDay: today } });
+  }
+}
+
 async function main() {
   console.log("🌱 Seeding merged database with level ladder and classrooms...");
 
@@ -33,6 +48,7 @@ async function main() {
   await prisma.attempt.deleteMany();
   await prisma.pendingProblem.deleteMany();
   await prisma.levelProgress.deleteMany();
+  await prisma.subjectProgress.deleteMany();
   await prisma.badge.deleteMany();
   await prisma.level.deleteMany();
   await prisma.user.deleteMany();
@@ -93,6 +109,7 @@ async function main() {
       lastActiveDay: new Date().toISOString().slice(0, 10),
     },
   });
+  await seedSubjectProgress(demo.id, 3, 120, 2);
 
   // Teacher user
   const teacher = await prisma.user.create({
@@ -126,6 +143,7 @@ async function main() {
       },
     });
     studentRows.push(studentRow);
+    await seedSubjectProgress(studentRow.id, s.currentStage, s.totalXp, s.streak);
   }
   console.log("Created demo, teacher, and classmate student accounts.");
 

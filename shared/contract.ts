@@ -14,8 +14,8 @@
 
 export type WorldId = 'arithmetic' | 'integers' | 'pre-algebra' | 'algebra-1';
 
-/** The two learning tracks. Each has its own ladder of levels. */
-export type Subject = 'math' | 'english';
+/** The learning tracks. Each has its own ladder of levels. */
+export type Subject = 'math' | 'english' | 'reading' | 'science';
 
 export interface WorldMeta {
   id: WorldId;

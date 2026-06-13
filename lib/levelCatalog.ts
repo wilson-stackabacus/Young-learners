@@ -11,6 +11,8 @@
 
 import type { Subject, WorldId } from "@/shared/contract";
 import { ENGLISH_SKILL_NAMES } from "./levels/english/generators";
+import { READING_SKILL_NAMES } from "./levels/reading/generators";
+import { SCIENCE_SKILL_NAMES } from "./levels/science/generators";
 
 export const SKILL_NAMES: string[] = [
   "Addition", "Subtraction", "Add & subtract", "Multiplication", "Subtract & multiply",
@@ -23,6 +25,8 @@ export const SKILL_NAMES: string[] = [
 
 export const STAGES_PER_TIER = 5;
 export const ENGLISH_OFFSET = 1000;
+export const READING_OFFSET = 2000;
+export const SCIENCE_OFFSET = 3000;
 
 export type LevelKind = "pure" | "blend" | "boss";
 
@@ -53,10 +57,18 @@ const MATH_WORLDS: WorldDef[] = [
   { id: "algebra-1", name: "Algebra 1", skillRange: [20, 23] },
 ];
 
-// English reuses the math world ids for theming/colors, with its own names.
+// Non-math subjects reuse the math world ids for theming/colors, with own names.
 const ENGLISH_WORLDS: WorldDef[] = [
   { id: "arithmetic", name: "Beginner words", skillRange: [1, 3] },
   { id: "integers", name: "Advanced words", skillRange: [4, 6] },
+];
+const READING_WORLDS: WorldDef[] = [
+  { id: "pre-algebra", name: "Beginner reading", skillRange: [1, 3] },
+  { id: "algebra-1", name: "Advanced reading", skillRange: [4, 6] },
+];
+const SCIENCE_WORLDS: WorldDef[] = [
+  { id: "integers", name: "Science explorer", skillRange: [1, 3] },
+  { id: "algebra-1", name: "Science master", skillRange: [4, 6] },
 ];
 
 function worldForMathSkill(skill: number): WorldId {
@@ -67,6 +79,12 @@ function worldForMathSkill(skill: number): WorldId {
 }
 function worldForEnglishSkill(skill: number): WorldId {
   return skill <= 3 ? "arithmetic" : "integers";
+}
+function worldForReadingSkill(skill: number): WorldId {
+  return skill <= 3 ? "pre-algebra" : "algebra-1";
+}
+function worldForScienceSkill(skill: number): WorldId {
+  return skill <= 3 ? "integers" : "algebra-1";
 }
 
 export function worldForSkill(skill: number): WorldId {
@@ -110,6 +128,8 @@ function buildLadder(
 
 const mathSkillName = (s: number) => SKILL_NAMES[s - 1] ?? `Skill ${s}`;
 const englishSkillName = (s: number) => ENGLISH_SKILL_NAMES[s - 1] ?? `Skill ${s}`;
+const readingSkillName = (s: number) => READING_SKILL_NAMES[s - 1] ?? `Skill ${s}`;
+const scienceSkillName = (s: number) => SCIENCE_SKILL_NAMES[s - 1] ?? `Skill ${s}`;
 
 let CATALOG: CatalogLevel[] | null = null;
 let BY_STAGE: Map<number, CatalogLevel> | null = null;
@@ -119,13 +139,18 @@ export function buildCatalog(): CatalogLevel[] {
   CATALOG = [
     ...buildLadder("math", SKILL_NAMES.length, mathSkillName, worldForMathSkill, 0),
     ...buildLadder("english", ENGLISH_SKILL_NAMES.length, englishSkillName, worldForEnglishSkill, ENGLISH_OFFSET),
+    ...buildLadder("reading", READING_SKILL_NAMES.length, readingSkillName, worldForReadingSkill, READING_OFFSET),
+    ...buildLadder("science", SCIENCE_SKILL_NAMES.length, scienceSkillName, worldForScienceSkill, SCIENCE_OFFSET),
   ];
   BY_STAGE = new Map(CATALOG.map((l) => [l.stage, l]));
   return CATALOG;
 }
 
 export function subjectOfStage(stage: number): Subject {
-  return stage > ENGLISH_OFFSET ? "english" : "math";
+  if (stage > SCIENCE_OFFSET) return "science";
+  if (stage > READING_OFFSET) return "reading";
+  if (stage > ENGLISH_OFFSET) return "english";
+  return "math";
 }
 
 export function levelForStage(stage: number): CatalogLevel | undefined {
@@ -148,8 +173,15 @@ export function lastStageOf(subject: Subject): number {
 // Math total, kept for reference.
 export const TOTAL_STAGES = catalogForSubject("math").length; // 247
 
+const WORLD_DEFS_BY_SUBJECT: Record<Subject, WorldDef[]> = {
+  math: MATH_WORLDS,
+  english: ENGLISH_WORLDS,
+  reading: READING_WORLDS,
+  science: SCIENCE_WORLDS,
+};
+
 export function worldMeta(subject: Subject = "math") {
-  const defs = subject === "english" ? ENGLISH_WORLDS : MATH_WORLDS;
+  const defs = WORLD_DEFS_BY_SUBJECT[subject] ?? MATH_WORLDS;
   const catalog = catalogForSubject(subject);
   return defs.map((w) => {
     const inWorld = catalog.filter((l) => l.world === w.id).map((l) => l.stage);

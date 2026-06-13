@@ -36,7 +36,7 @@ const WORLD_TINT: Record<string, string> = {
   arithmetic: "#34d399", integers: "#f59e0b", "pre-algebra": "#38bdf8", "algebra-1": "#a78bfa",
 };
 
-const displayStage = (s: number) => (s > 1000 ? s - 1000 : s);
+const displayStage = (s: number) => (s > 3000 ? s - 3000 : s > 2000 ? s - 2000 : s > 1000 ? s - 1000 : s);
 const levelTitle = (l: LevelInfo) =>
   l.isBoss ? `Boss · ${l.skillNames.join(" & ")}` : l.kind === "pure" ? l.skillNames[0] : l.skillNames.join(" + ");
 
@@ -165,8 +165,8 @@ export default function AppClient() {
       <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>🎯 Questline</div>
         <div style={{ ...seg, marginLeft: 8 }}>
-          {(["math", "english"] as Subject[]).map((s) => (
-            <button key={s} onClick={() => setSubject(s)} style={segBtn(subject === s)}>{s === "math" ? "Math" : "English"}</button>
+          {(["math", "english", "reading", "science"] as Subject[]).map((s) => (
+            <button key={s} onClick={() => setSubject(s)} style={segBtn(subject === s)}>{s.charAt(0).toUpperCase() + s.slice(1)}</button>
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, marginLeft: "auto", alignItems: "center" }}>
@@ -360,7 +360,7 @@ function Progress({ me, map, subject }: { me: UserSummary | null; map: MapRespon
   const cards = [
     { label: "Total XP", value: (me?.totalXp ?? 0).toLocaleString() },
     { label: "Day streak", value: me?.streakDays ?? 0 },
-    { label: `${subject === "math" ? "Math" : "English"} stage`, value: `${cur} / ${total}` },
+    { label: `${subject.charAt(0).toUpperCase() + subject.slice(1)} stage`, value: `${cur} / ${total}` },
     { label: "Levels cleared", value: cleared },
     { label: "Stars earned", value: stars },
   ];
@@ -376,7 +376,7 @@ function Progress({ me, map, subject }: { me: UserSummary | null; map: MapRespon
       </div>
       <div style={{ ...glass, padding: 18, marginTop: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#94a3b8", marginBottom: 6 }}>
-          <span>{subject === "math" ? "Math" : "English"} ladder</span><span>{cleared} / {total} cleared</span>
+          <span>{subject.charAt(0).toUpperCase() + subject.slice(1)} ladder</span><span>{cleared} / {total} cleared</span>
         </div>
         <div style={barOuter}><div style={{ ...barInner, width: `${total ? (cleared / total) * 100 : 0}%` }} /></div>
       </div>

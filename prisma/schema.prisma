@@ -17,23 +17,25 @@ model User {
   displayName String
   createdAt   DateTime @default(now())
   role        String   @default("student") // "student" | "teacher"
+  isGuest     Boolean  @default(false) // guests are excluded from leaderboards & purged on logout
 
+  // Aggregate XP/streak (sum / latest across subjects) kept for the global
+  // leaderboard + header backward-compat. Per-subject truth lives in SubjectProgress.
   totalXp      Int     @default(0)
-  // Highest stage reached per subject. Math ladder starts at 1, English at 1001.
-  currentStage Int     @default(1) // math
-  englishStage Int     @default(1001) // english
+  currentStage Int     @default(1) // legacy math pointer (engine now uses SubjectProgress)
+  englishStage Int     @default(1001) // legacy english pointer
 
-  // Streak: consecutive days with at least one attempt.
   currentStreak    Int     @default(0)
   longestStreak    Int     @default(0)
-  lastActiveDay    String? // ISO date (YYYY-MM-DD) of last qualifying activity
+  lastActiveDay    String?
   freezesAvailable Int     @default(2)
 
-  attempts Attempt[]
-  progress LevelProgress[]
-  pending  PendingProblem[]
-  badges   UserBadge[]
-  quests   UserQuest[]
+  attempts        Attempt[]
+  progress        LevelProgress[]
+  subjectProgress SubjectProgress[]
+  pending         PendingProblem[]
+  badges          UserBadge[]
+  quests          UserQuest[]
 
   // Classroom relationships
   classroomsCreated Classroom[]       @relation("TeacherClassrooms")
@@ -75,6 +77,24 @@ model LevelProgress {
   hearts         Int? // boss only: hearts remaining
 
   @@unique([userId, stage])
+  @@index([userId])
+}
+
+// Per-user, per-subject state (the source of truth for XP/streak/stage). One
+// row per (user, subject). Subject leaderboards rank by SubjectProgress.totalXp.
+model SubjectProgress {
+  id            String  @id @default(cuid())
+  userId        String
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject       String // "math" | "english" | "reading" | "science"
+  currentStage  Int // the subject's reached stage (defaults to its first stage)
+  totalXp       Int     @default(0)
+  currentStreak Int     @default(0)
+  longestStreak Int     @default(0)
+  lastActiveDay String?
+  placementDone Boolean @default(false) // placement test completed for this subject
+
+  @@unique([userId, subject])
   @@index([userId])
 }
 
