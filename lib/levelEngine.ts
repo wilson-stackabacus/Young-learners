@@ -33,6 +33,7 @@ import {
   difficultyBucket,
 } from "./progression";
 import { checkAnswer } from "./answer";
+import { aiHint } from "./ai/geminiHint";
 import { awardXp } from "./gamification/xp";
 import { updateStreak } from "./gamification/streak";
 import {
@@ -216,14 +217,64 @@ export async function submitAnswer(
   token: string,
   answer: string,
 ): Promise<AnswerResponse> {
+  const pending = await prisma.pendingProblem.findUnique({ where: { token } });
+  if (!pending || pending.userId !== userId || pending.stage !== stage) {
+    throw new EngineError("invalid_token", 409);
+  }
+  const cat = levelForStage(stage)!;
+
+  // Practice + wrong + hints remain → return a hint. Handled OUTSIDE any
+  // transaction so the (possibly slow) AI call never holds a DB lock open.
+  if (!cat.isBoss) {
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const prog =
+      (await prisma.levelProgress.findUnique({ where: { userId_stage: { userId, stage } } })) ??
+      (await prisma.levelProgress.create({
+        data: { userId, stage, status: deriveStatus(stage, user.currentStage) },
+      }));
+    const commonMistakes = JSON.parse(pending.commonMistakes);
+    const check = checkAnswer(pending.inputType as ProblemInputType, pending.answer, answer, commonMistakes);
+
+    if (!check.correct && pending.attemptsUsed + 1 <= PROGRESSION.HINTS_BEFORE_SOLUTION) {
+      const usedNow = pending.attemptsUsed + 1;
+      const hints = JSON.parse(pending.hints) as string[];
+      // 1) rule-based diagnostic (instant) → 2) Gemini (personalized) → 3) templated fallback
+      let hint = check.mistake?.hint;
+      if (!hint) {
+        const ai = await aiHint({
+          prompt: pending.prompt,
+          correctAnswer: pending.answer,
+          givenAnswer: answer,
+          skillNames: cat.skillNames,
+        });
+        hint = ai ?? hints[usedNow - 1] ?? hints[hints.length - 1];
+      }
+      await prisma.pendingProblem.update({ where: { token }, data: { attemptsUsed: usedNow } });
+      return {
+        correct: false,
+        state: "hint",
+        hint,
+        attemptsRemaining: PROGRESSION.HINTS_BEFORE_SOLUTION - usedNow,
+        stats: {
+          totalXp: user.totalXp,
+          accuracy: accuracyFromRecent(JSON.parse(prog.recentResults) as boolean[]),
+          progress: prog.progress,
+          stars: prog.stars,
+          streakDays: user.currentStreak,
+          xpGained: 0,
+          progressDelta: 0,
+        },
+      };
+    }
+  }
+
+  // Resolved answer (solve / reveal) or any boss answer → atomic transaction.
   return prisma.$transaction(async (tx) => {
-    const pending = await tx.pendingProblem.findUnique({ where: { token } });
-    if (!pending || pending.userId !== userId || pending.stage !== stage) {
+    const pendingTx = await tx.pendingProblem.findUnique({ where: { token } });
+    if (!pendingTx || pendingTx.userId !== userId || pendingTx.stage !== stage) {
       throw new EngineError("invalid_token", 409);
     }
     const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
-    const cat = levelForStage(stage)!;
-
     let prog = await tx.levelProgress.findUnique({ where: { userId_stage: { userId, stage } } });
     if (!prog) {
       prog = await tx.levelProgress.create({
@@ -235,10 +286,9 @@ export async function submitAnswer(
         },
       });
     }
-
     return cat.isBoss
-      ? handleBossAnswer(tx, { user, cat, prog, pending, answer })
-      : handlePracticeAnswer(tx, { user, cat, prog, pending, answer });
+      ? handleBossAnswer(tx, { user, cat, prog, pending: pendingTx, answer })
+      : handlePracticeAnswer(tx, { user, cat, prog, pending: pendingTx, answer });
   });
 }
 
@@ -254,32 +304,10 @@ type AnswerCtx = {
 async function handlePracticeAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerResponse> {
   const { user, cat, prog, pending, answer } = ctx;
   const stage = cat.stage;
-  const hints = JSON.parse(pending.hints) as string[];
+  // The hint branch is handled in submitAnswer (outside the transaction, so the
+  // AI call doesn't hold a DB lock). Here we only resolve: solve or reveal.
   const commonMistakes = JSON.parse(pending.commonMistakes);
   const check = checkAnswer(pending.inputType as ProblemInputType, pending.answer, answer, commonMistakes);
-
-  // Wrong, hints remain → return a hint, keep the problem.
-  if (!check.correct && pending.attemptsUsed + 1 <= PROGRESSION.HINTS_BEFORE_SOLUTION) {
-    const usedNow = pending.attemptsUsed + 1;
-    await tx.pendingProblem.update({ where: { token: pending.token }, data: { attemptsUsed: usedNow } });
-    const hint = check.mistake?.hint ?? hints[usedNow - 1] ?? hints[hints.length - 1];
-    const accuracy = accuracyFromRecent(JSON.parse(prog.recentResults) as boolean[]);
-    return {
-      correct: false,
-      state: "hint",
-      hint,
-      attemptsRemaining: PROGRESSION.HINTS_BEFORE_SOLUTION - usedNow,
-      stats: {
-        totalXp: user.totalXp,
-        accuracy,
-        progress: prog.progress,
-        stars: prog.stars,
-        streakDays: user.currentStreak,
-        xpGained: 0,
-        progressDelta: 0,
-      },
-    };
-  }
 
   const outcomeCorrect = check.correct;
   const solvedAfterHint = outcomeCorrect && pending.attemptsUsed > 0;

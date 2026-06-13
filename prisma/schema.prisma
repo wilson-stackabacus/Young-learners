@@ -2,7 +2,8 @@
 // See docs/DESIGN.md, docs/API.md, and shared/contract.ts for the full spec.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"] // enables the libSQL/Turso adapter
 }
 
 datasource db {
