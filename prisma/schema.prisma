@@ -19,8 +19,9 @@ model User {
   role        String   @default("student") // "student" | "teacher"
 
   totalXp      Int     @default(0)
-  // Position on the 225-stage ladder (the highest stage unlocked/reached).
-  currentStage Int     @default(1)
+  // Highest stage reached per subject. Math ladder starts at 1, English at 1001.
+  currentStage Int     @default(1) // math
+  englishStage Int     @default(1001) // english
 
   // Streak: consecutive days with at least one attempt.
   currentStreak    Int     @default(0)
@@ -41,12 +42,13 @@ model User {
 
 // Static definition of one of the 225 stages. Seeded from lib/levelCatalog.
 model Level {
-  stage       Int     @id // 1..247 — global level id
-  tier        Int // 1..45 — difficulty step
+  stage       Int     @id // math: 1..247, english: 1001..  — global level id
+  subject     String  @default("math") // "math" | "english"
+  tier        Int // difficulty step within the subject
   stageInTier Int // 1..5 for practice, 0 for a boss
   kind        String // "pure" | "blend" | "boss"
   skills      String // JSON array of skill ids, e.g. "[4,5]"
-  world       String // "arithmetic" | "integers" | "pre-algebra" | "algebra-1"
+  world       String // biome id (shared with math for theming)
   difficulty  Float // 4 for pure Lv4, 4.5 for the Lv4½ blend
   isBoss      Boolean @default(false)
   testsLevel  Int? // boss only: the whole-level number it gates

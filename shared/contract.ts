@@ -14,6 +14,9 @@
 
 export type WorldId = 'arithmetic' | 'integers' | 'pre-algebra' | 'algebra-1';
 
+/** The two learning tracks. Each has its own ladder of levels. */
+export type Subject = 'math' | 'english';
+
 export interface WorldMeta {
   id: WorldId;
   name: string;
@@ -37,6 +40,7 @@ export interface LevelInfo {
   difficulty: number;     // 4 for pure Lv4, 4.5 for the Lv4½ blend
   isBoss?: boolean;       // true for boss stages
   testsLevel?: number;    // boss only: the whole-level number it gates
+  subject?: Subject;      // "math" | "english"
 }
 
 /** Live state of a boss battle (present on boss stages). */
@@ -82,7 +86,8 @@ export type MeResponse = UserSummary;
 export interface MapResponse {
   user: UserSummary;
   worlds: WorldMeta[];
-  levels: LevelState[];   // length 225
+  levels: LevelState[];   // all stages for `subject`
+  subject?: Subject;      // which track this map is for (default "math")
 }
 
 export type ProblemInputType =

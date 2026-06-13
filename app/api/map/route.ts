@@ -6,5 +6,6 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const u = await resolveUser(req);
-  return NextResponse.json(await getMap(u.id));
+  const subject = new URL(req.url).searchParams.get("subject") === "english" ? "english" : "math";
+  return NextResponse.json(await getMap(u.id, subject));
 }

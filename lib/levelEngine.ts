@@ -1,28 +1,28 @@
 /**
- * Level engine — the backend brain.
+ * Level engine — the backend brain (subject-aware: math + english).
  *
- * Produces the contract-shaped outputs (docs/API.md, shared/contract.ts):
- *   - getMap:     all stages with this user's state
- *   - getProblem: generate a problem (answer kept server-side) + level + stats
- *   - submitAnswer: check, run progression (or a boss battle), persist, respond
+ *   - getMap(userId, subject):     all stages for that subject + per-user state
+ *   - getProblem(userId, stage):   generate a problem (answer kept server-side)
+ *   - submitAnswer(...):           check, run progression or a boss battle, persist
  *
- * Two stage kinds behave differently on submit:
- *   - practice (pure/blend): progress-bar model + two-hint flow
- *   - boss: a no-hints gauntlet — correct hits damage the boss, wrong answers
- *     cost a heart; clear the boss (HP 0) to unlock the next whole level.
+ * The subject is derived from the stage id (math 1..247, english 1001..), so the
+ * same engine, progression, hints, and bosses serve both ladders.
  */
 
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import {
-  buildCatalog,
   levelForStage,
   worldMeta,
-  TOTAL_STAGES,
+  catalogForSubject,
+  firstStageOf,
+  lastStageOf,
+  subjectOfStage,
   type CatalogLevel,
 } from "./levelCatalog";
 import { generateForLevel } from "./levels/generators";
+import { generateEnglishForLevel } from "./levels/english/generators";
 import {
   PROGRESSION,
   BOSS,
@@ -53,6 +53,7 @@ import type {
   ProblemInputType,
   ProblemResponse,
   Stats,
+  Subject,
   UserSummary,
 } from "@/shared/contract";
 
@@ -63,12 +64,19 @@ export class EngineError extends Error {
 }
 
 type DB = Prisma.TransactionClient;
+type UserRow = Prisma.UserGetPayload<{}>;
 
-// ─── Mappers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** The user's reached stage for a subject (math uses currentStage, english englishStage). */
+function userStageFor(user: { currentStage: number; englishStage: number }, subject: Subject): number {
+  return subject === "english" ? user.englishStage : user.currentStage;
+}
 
 function toLevelInfo(l: CatalogLevel): LevelInfo {
   return {
     stage: l.stage,
+    subject: l.subject,
     tier: l.tier,
     stageInTier: l.stageInTier,
     kind: l.kind,
@@ -81,25 +89,19 @@ function toLevelInfo(l: CatalogLevel): LevelInfo {
   };
 }
 
-function toSummary(user: {
-  id: string;
-  displayName: string;
-  totalXp: number;
-  currentStage: number;
-  currentStreak: number;
-}): UserSummary {
+function toSummary(user: UserRow, subject: Subject): UserSummary {
   return {
     id: user.id,
     displayName: user.displayName,
     totalXp: user.totalXp,
-    currentStage: user.currentStage,
+    currentStage: userStageFor(user, subject),
     streakDays: user.currentStreak,
   };
 }
 
-function deriveStatus(stage: number, currentStage: number): LevelStatus {
-  if (stage < currentStage) return "cleared";
-  if (stage === currentStage) return "current";
+function deriveStatus(stage: number, userStage: number): LevelStatus {
+  if (stage < userStage) return "cleared";
+  if (stage === userStage) return "current";
   return "locked";
 }
 
@@ -107,20 +109,27 @@ function bossStateOf(bossHp: number, hearts: number, defeated = false, failed = 
   return { hp: bossHp, maxHp: BOSS.HP, hearts, maxHearts: BOSS.HEARTS, defeated, failed };
 }
 
+function generateFor(cat: CatalogLevel) {
+  return cat.subject === "english"
+    ? generateEnglishForLevel(cat.skills, cat.difficulty)
+    : generateForLevel(cat.skills, cat.difficulty);
+}
+
 // ─── Map ─────────────────────────────────────────────────────────────────────
 
-export async function getMap(userId: string): Promise<MapResponse> {
+export async function getMap(userId: string, subject: Subject = "math"): Promise<MapResponse> {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const rows = await prisma.levelProgress.findMany({ where: { userId } });
   const byStage = new Map(rows.map((r) => [r.stage, r]));
+  const userStage = userStageFor(user, subject);
 
-  const levels: LevelState[] = buildCatalog().map((l) => {
+  const levels: LevelState[] = catalogForSubject(subject).map((l) => {
     const r = byStage.get(l.stage);
-    const status: LevelStatus = r ? (r.status as LevelStatus) : deriveStatus(l.stage, user.currentStage);
+    const status: LevelStatus = r ? (r.status as LevelStatus) : deriveStatus(l.stage, userStage);
     return { ...toLevelInfo(l), status, progress: r?.progress ?? 0, stars: r?.stars ?? 0 };
   });
 
-  return { user: toSummary(user), worlds: worldMeta(), levels };
+  return { user: toSummary(user, subject), worlds: worldMeta(subject), levels, subject };
 }
 
 // ─── Problem generation ──────────────────────────────────────────────────────
@@ -129,7 +138,7 @@ export async function getMap(userId: string): Promise<MapResponse> {
 async function createPending(db: DB, userId: string, stage: number, isBoss: boolean): Promise<Problem> {
   const cat = levelForStage(stage);
   if (!cat) throw new EngineError("bad_stage", 404);
-  const g = generateForLevel(cat.skills, cat.difficulty);
+  const g = generateFor(cat);
   const token = "pb_" + randomUUID();
 
   await db.pendingProblem.deleteMany({ where: { userId } });
@@ -162,23 +171,18 @@ async function createPending(db: DB, userId: string, stage: number, isBoss: bool
 
 export async function getProblem(userId: string, stage: number): Promise<ProblemResponse> {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
-  if (stage < 1 || stage > TOTAL_STAGES) throw new EngineError("bad_stage", 404);
-  if (stage > user.currentStage) throw new EngineError("locked", 403);
+  const subject = subjectOfStage(stage);
+  if (stage < firstStageOf(subject) || stage > lastStageOf(subject)) throw new EngineError("bad_stage", 404);
+  if (stage > userStageFor(user, subject)) throw new EngineError("locked", 403);
 
   const cat = levelForStage(stage)!;
+  const userStage = userStageFor(user, subject);
 
   if (cat.isBoss) {
-    // Start (or continue) the boss battle.
     const prog = await prisma.levelProgress.upsert({
       where: { userId_stage: { userId, stage } },
       update: {},
-      create: {
-        userId,
-        stage,
-        status: deriveStatus(stage, user.currentStage),
-        bossHp: BOSS.HP,
-        hearts: BOSS.HEARTS,
-      },
+      create: { userId, stage, status: deriveStatus(stage, userStage), bossHp: BOSS.HP, hearts: BOSS.HEARTS },
     });
     let bossHp = prog.bossHp;
     let hearts = prog.hearts;
@@ -195,7 +199,7 @@ export async function getProblem(userId: string, stage: number): Promise<Problem
   const prog = await prisma.levelProgress.upsert({
     where: { userId_stage: { userId, stage } },
     update: {},
-    create: { userId, stage, status: deriveStatus(stage, user.currentStage) },
+    create: { userId, stage, status: deriveStatus(stage, userStage) },
   });
   const problem = await createPending(prisma, userId, stage, false);
   const accuracy = accuracyFromRecent(JSON.parse(prog.recentResults) as boolean[]);
@@ -222,6 +226,7 @@ export async function submitAnswer(
     throw new EngineError("invalid_token", 409);
   }
   const cat = levelForStage(stage)!;
+  const subject = cat.subject;
 
   // Practice + wrong + hints remain → return a hint. Handled OUTSIDE any
   // transaction so the (possibly slow) AI call never holds a DB lock open.
@@ -230,7 +235,7 @@ export async function submitAnswer(
     const prog =
       (await prisma.levelProgress.findUnique({ where: { userId_stage: { userId, stage } } })) ??
       (await prisma.levelProgress.create({
-        data: { userId, stage, status: deriveStatus(stage, user.currentStage) },
+        data: { userId, stage, status: deriveStatus(stage, userStageFor(user, subject)) },
       }));
     const commonMistakes = JSON.parse(pending.commonMistakes);
     const check = checkAnswer(pending.inputType as ProblemInputType, pending.answer, answer, commonMistakes);
@@ -238,7 +243,6 @@ export async function submitAnswer(
     if (!check.correct && pending.attemptsUsed + 1 <= PROGRESSION.HINTS_BEFORE_SOLUTION) {
       const usedNow = pending.attemptsUsed + 1;
       const hints = JSON.parse(pending.hints) as string[];
-      // 1) rule-based diagnostic (instant) → 2) Gemini (personalized) → 3) templated fallback
       let hint = check.mistake?.hint;
       if (!hint) {
         const ai = await aiHint({
@@ -269,32 +273,40 @@ export async function submitAnswer(
   }
 
   // Resolved answer (solve / reveal) or any boss answer → atomic transaction.
-  return prisma.$transaction(async (tx) => {
-    const pendingTx = await tx.pendingProblem.findUnique({ where: { token } });
-    if (!pendingTx || pendingTx.userId !== userId || pendingTx.stage !== stage) {
-      throw new EngineError("invalid_token", 409);
-    }
-    const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
-    let prog = await tx.levelProgress.findUnique({ where: { userId_stage: { userId, stage } } });
-    if (!prog) {
-      prog = await tx.levelProgress.create({
-        data: {
-          userId,
-          stage,
-          status: deriveStatus(stage, user.currentStage),
-          ...(cat.isBoss ? { bossHp: BOSS.HP, hearts: BOSS.HEARTS } : {}),
-        },
-      });
-    }
-    return cat.isBoss
-      ? handleBossAnswer(tx, { user, cat, prog, pending: pendingTx, answer })
-      : handlePracticeAnswer(tx, { user, cat, prog, pending: pendingTx, answer });
-  });
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const pendingTx = await tx.pendingProblem.findUnique({ where: { token } });
+      if (!pendingTx || pendingTx.userId !== userId || pendingTx.stage !== stage) {
+        throw new EngineError("invalid_token", 409);
+      }
+      const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
+      let prog = await tx.levelProgress.findUnique({ where: { userId_stage: { userId, stage } } });
+      if (!prog) {
+        prog = await tx.levelProgress.create({
+          data: {
+            userId,
+            stage,
+            status: deriveStatus(stage, userStageFor(user, subject)),
+            ...(cat.isBoss ? { bossHp: BOSS.HP, hearts: BOSS.HEARTS } : {}),
+          },
+        });
+      }
+      const ctx: AnswerCtx = { user, cat, subject, prog, pending: pendingTx, answer };
+      return cat.isBoss ? handleBossAnswer(tx, ctx) : handlePracticeAnswer(tx, ctx);
+    },
+    { timeout: 20000, maxWait: 10000 },
+  );
+
+  // Badges are non-critical → evaluate AFTER the transaction commits, so the
+  // transaction stays short on higher-latency hosted DBs (Turso).
+  await evaluateAndAwardBadges(prisma, userId).catch(() => {});
+  return result;
 }
 
 type AnswerCtx = {
-  user: Prisma.UserGetPayload<{}>;
+  user: UserRow;
   cat: CatalogLevel;
+  subject: Subject;
   prog: Prisma.LevelProgressGetPayload<{}>;
   pending: Prisma.PendingProblemGetPayload<{}>;
   answer: string;
@@ -302,10 +314,8 @@ type AnswerCtx = {
 
 // ── Practice stages: progress bar + two-hint flow ──
 async function handlePracticeAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerResponse> {
-  const { user, cat, prog, pending, answer } = ctx;
+  const { user, cat, subject, prog, pending, answer } = ctx;
   const stage = cat.stage;
-  // The hint branch is handled in submitAnswer (outside the transaction, so the
-  // AI call doesn't hold a DB lock). Here we only resolve: solve or reveal.
   const commonMistakes = JSON.parse(pending.commonMistakes);
   const check = checkAnswer(pending.inputType as ProblemInputType, pending.answer, answer, commonMistakes);
 
@@ -330,32 +340,33 @@ async function handlePracticeAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerRespo
     freezesAvailable: user.freezesAvailable,
   });
 
+  const userStage = userStageFor(user, subject);
   const cleared = newProgress >= PROGRESSION.ADVANCE_AT;
   let status: LevelStatus = (prog.status as LevelStatus) === "locked" ? "current" : (prog.status as LevelStatus);
   let stars = prog.stars;
   let clearedAt = prog.clearedAt;
-  let newCurrentStage = user.currentStage;
+  let newStage = userStage;
   let advanced: { toStage: number } | undefined;
 
   if (cleared) {
     status = "cleared";
     stars = Math.max(prog.stars, starsForAccuracy(accuracy));
     clearedAt = prog.clearedAt ?? new Date();
-    if (stage === user.currentStage && stage < TOTAL_STAGES) {
-      newCurrentStage = stage + 1;
-      advanced = { toStage: newCurrentStage };
+    if (stage === userStage && stage < lastStageOf(subject)) {
+      newStage = stage + 1;
+      advanced = { toStage: newStage };
     }
   }
 
   const newTotalXp = user.totalXp + xp.total;
   await persistResolution(tx, {
-    userId: user.id, stage, pending, answer, correct: outcomeCorrect,
+    userId: user.id, stage, subject, pending, answer, correct: outcomeCorrect,
     hintsUsed: pending.attemptsUsed, solvedAfterHint, isBoss: false, xpAwarded: xp.total,
     progData: { progress: newProgress, status, stars, totalCorrect: prog.totalCorrect + (outcomeCorrect ? 1 : 0), totalAttempts: prog.totalAttempts + 1, recentResults: JSON.stringify(recent), clearedAt },
-    progId: prog.id, advanced, newCurrentStage, newTotalXp, streak,
+    progId: prog.id, advanced, newStage, newTotalXp, streak,
   });
 
-  const nextStage = advanced ? newCurrentStage : stage;
+  const nextStage = advanced ? newStage : stage;
   const nextProblem = await createPending(tx, user.id, nextStage, levelForStage(nextStage)?.isBoss ?? false);
   const stats = advanced
     ? { totalXp: newTotalXp, accuracy: 0, progress: 0, stars: 0, streakDays: streak.currentStreak, xpGained: xp.total, progressDelta }
@@ -374,7 +385,7 @@ async function handlePracticeAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerRespo
 
 // ── Boss stages: HP + hearts gauntlet, no hints ──
 async function handleBossAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerResponse> {
-  const { user, cat, prog, pending, answer } = ctx;
+  const { user, cat, subject, prog, pending, answer } = ctx;
   const stage = cat.stage;
   const check = checkAnswer(pending.inputType as ProblemInputType, pending.answer, answer);
 
@@ -406,10 +417,11 @@ async function handleBossAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerResponse>
     freezesAvailable: user.freezesAvailable,
   });
 
+  const userStage = userStageFor(user, subject);
   let status: LevelStatus = (prog.status as LevelStatus) === "locked" ? "current" : (prog.status as LevelStatus);
   let stars = prog.stars;
   let clearedAt = prog.clearedAt;
-  let newCurrentStage = user.currentStage;
+  let newStage = userStage;
   let advanced: { toStage: number } | undefined;
 
   if (defeated) {
@@ -417,26 +429,25 @@ async function handleBossAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerResponse>
     stars = 3;
     clearedAt = prog.clearedAt ?? new Date();
     xpGained += BOSS.XP_BONUS;
-    if (stage === user.currentStage && stage < TOTAL_STAGES) {
-      newCurrentStage = stage + 1;
-      advanced = { toStage: newCurrentStage };
+    if (stage === userStage && stage < lastStageOf(subject)) {
+      newStage = stage + 1;
+      advanced = { toStage: newStage };
     }
   }
   if (failed) {
-    // The fight resets — restore boss HP and hearts.
     bossHp = BOSS.HP;
     hearts = BOSS.HEARTS;
   }
 
   const newTotalXp = user.totalXp + xpGained;
   await persistResolution(tx, {
-    userId: user.id, stage, pending, answer, correct: check.correct,
+    userId: user.id, stage, subject, pending, answer, correct: check.correct,
     hintsUsed: 0, solvedAfterHint: false, isBoss: true, xpAwarded: xpGained,
     progData: { status, stars, bossHp, hearts, totalCorrect: prog.totalCorrect + (check.correct ? 1 : 0), totalAttempts: prog.totalAttempts + 1, clearedAt },
-    progId: prog.id, advanced, newCurrentStage, newTotalXp, streak,
+    progId: prog.id, advanced, newStage, newTotalXp, streak,
   });
 
-  const nextStage = defeated ? newCurrentStage : stage;
+  const nextStage = defeated ? newStage : stage;
   const nextProblem = await createPending(tx, user.id, nextStage, levelForStage(nextStage)?.isBoss ?? false);
 
   return {
@@ -465,6 +476,7 @@ async function persistResolution(
   p: {
     userId: string;
     stage: number;
+    subject: Subject;
     pending: Prisma.PendingProblemGetPayload<{}>;
     answer: string;
     correct: boolean;
@@ -475,7 +487,7 @@ async function persistResolution(
     progData: Prisma.LevelProgressUpdateInput;
     progId: string;
     advanced?: { toStage: number };
-    newCurrentStage: number;
+    newStage: number;
     newTotalXp: number;
     streak: { currentStreak: number; longestStreak: number; lastActiveDay: string; freezesAvailable: number };
   },
@@ -506,11 +518,13 @@ async function persistResolution(
       },
     });
   }
+  const stageUpdate =
+    p.subject === "english" ? { englishStage: p.newStage } : { currentStage: p.newStage };
   await tx.user.update({
     where: { id: p.userId },
     data: {
       totalXp: p.newTotalXp,
-      currentStage: p.newCurrentStage,
+      ...stageUpdate,
       currentStreak: p.streak.currentStreak,
       longestStreak: p.streak.longestStreak,
       lastActiveDay: p.streak.lastActiveDay,
@@ -518,7 +532,6 @@ async function persistResolution(
     },
   });
   await tx.pendingProblem.delete({ where: { token: p.pending.token } });
-  await evaluateAndAwardBadges(tx, p.userId);
 }
 
 // ─── Badges ──────────────────────────────────────────────────────────────────

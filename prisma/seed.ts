@@ -44,6 +44,7 @@ async function main() {
   await prisma.level.createMany({
     data: catalog.map((l) => ({
       stage: l.stage,
+      subject: l.subject,
       tier: l.tier,
       stageInTier: l.stageInTier,
       kind: l.kind,
