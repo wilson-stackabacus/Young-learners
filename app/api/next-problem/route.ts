@@ -5,9 +5,11 @@ import { pickNextProblem } from "@/lib/attempt";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   const user = await getOrCreateDemoUser();
-  const next = await pickNextProblem(prisma, user.id);
+  const url = new URL(req.url);
+  const subject = url.searchParams.get("subject") || "math";
+  const next = await pickNextProblem(prisma, user.id, subject);
   if (!next) {
     return NextResponse.json(
       { error: "no_problems_available" },

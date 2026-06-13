@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,34 +10,110 @@
 
 html,
 body {
-  background: #0b0d12;
-  color: #e6e8ef;
+  background: #06070a;
+  color: #e2e8f0;
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   background-image:
-    radial-gradient(1200px 600px at 80% -10%, rgba(124, 92, 255, 0.18), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(34, 211, 238, 0.12), transparent 60%);
+    radial-gradient(1000px 500px at 80% -5%, rgba(124, 92, 255, 0.22), transparent 70%),
+    radial-gradient(800px 450px at -5% 105%, rgba(34, 211, 238, 0.15), transparent 70%);
   background-attachment: fixed;
+  background-size: cover;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Glassmorphism system */
+.glass-panel {
+  background: rgba(19, 23, 34, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glass-panel:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5);
+}
+
+.glass-card-interactive {
+  background: rgba(26, 32, 48, 0.4);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card-interactive:hover {
+  background: rgba(26, 32, 48, 0.6);
+  border-color: rgba(124, 92, 255, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(124, 92, 255, 0.15);
+}
+
+/* Buttons */
 .btn {
-  @apply inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors;
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-95;
 }
+
 .btn-primary {
-  @apply btn bg-accent text-white hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply btn bg-gradient-to-r from-accent to-accent2 text-white shadow-lg shadow-accent/20 hover:shadow-accent/35 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed;
 }
+
 .btn-secondary {
-  @apply btn bg-panel2 text-text hover:bg-panel2/80 border border-white/5;
+  @apply btn bg-white/5 text-text hover:bg-white/10 border border-white/5 hover:border-white/10;
 }
+
+.btn-tab {
+  @apply px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200;
+}
+
+.btn-tab-active {
+  @apply btn-tab bg-accent text-white shadow-md shadow-accent/10;
+}
+
+.btn-tab-inactive {
+  @apply btn-tab text-muted hover:text-text hover:bg-white/5;
+}
+
 .card {
-  @apply rounded-xl bg-panel border border-white/5 p-5 shadow-lg shadow-black/20;
+  @apply glass-panel rounded-2xl p-6;
 }
+
 .kbd {
-  @apply rounded border border-white/10 bg-bg px-1.5 py-0.5 text-[11px] text-muted;
+  @apply rounded-md border border-white/10 bg-black/40 px-2 py-0.5 text-[11px] text-muted font-mono;
 }
+
 .chip {
-  @apply inline-flex items-center gap-1 rounded-full bg-panel2 px-2 py-0.5 text-xs text-muted;
+  @apply inline-flex items-center gap-1 rounded-full bg-white/5 border border-white/5 px-2.5 py-0.5 text-xs text-muted font-medium;
+}
+
+/* Animations */
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.9;
+    filter: drop-shadow(0 0 8px rgba(124, 92, 255, 0.5));
+  }
+}
+
+.glow-pulse {
+  animation: pulseGlow 2s infinite ease-in-out;
+}
+
+/* Heatmap Styles */
+.heatmap-cell {
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.heatmap-cell:hover {
+  transform: scale(1.15);
+  z-index: 10;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
 }

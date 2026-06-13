@@ -35,6 +35,7 @@ export default async function Home() {
       id: t.id,
       slug: t.slug,
       name: t.name,
+      subject: t.subject,
       baseRating: t.baseRating,
       rating,
       solved: m?.solved ?? 0,
@@ -54,6 +55,7 @@ export default async function Home() {
         level: user.level,
         currentStreak: user.currentStreak,
         longestStreak: user.longestStreak,
+        role: user.role,
         freezesAvailable: user.freezesAvailable,
       }}
       topics={topicRows}

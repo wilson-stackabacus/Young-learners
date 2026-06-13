@@ -29,11 +29,12 @@ export async function GET() {
   const topicRows = topics.map((t) => {
     const m = masteryMap.get(t.id);
     const rating = m?.rating ?? t.baseRating;
-    const unlocked = m ? rating >= UNLOCK.rating : t.prerequisites.length === 0; // t.prerequisites now exists via include
+    const unlocked = m ? rating >= UNLOCK.rating : t.prerequisites.length === 0;
     return {
       id: t.id,
       slug: t.slug,
       name: t.name,
+      subject: t.subject,
       baseRating: t.baseRating,
       rating,
       solved: m?.solved ?? 0,

@@ -15,6 +15,7 @@ model User {
   username    String   @unique
   displayName String
   createdAt   DateTime @default(now())
+  role        String   @default("student") // "student" | "teacher"
 
   totalXp      Int    @default(0)
   level        Int    @default(1)
@@ -27,12 +28,18 @@ model User {
   attempts     Attempt[]
   masteries    Mastery[]
   badges       UserBadge[]
+  quests       UserQuest[]
+
+  // Classroom relationships
+  classroomsCreated Classroom[]       @relation("TeacherClassrooms")
+  classroomsJoined  ClassroomMember[]
 }
 
 model Topic {
   id           String   @id @default(cuid())
   slug         String   @unique
   name         String
+  subject      String   @default("math") // "math" | "computer_science"
   // Elo-style starting rating for this topic — a fresh user's mastery begins near here.
   baseRating   Int      @default(1000)
   order        Int      @default(0)
@@ -131,4 +138,52 @@ model UserBadge {
 
   @@unique([userId, badgeId])
   @@index([userId])
+}
+
+model Classroom {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  teacherId String
+  teacher   User     @relation("TeacherClassrooms", fields: [teacherId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  members   ClassroomMember[]
+}
+
+model ClassroomMember {
+  id          String    @id @default(cuid())
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt    DateTime  @default(now())
+
+  @@unique([classroomId, userId])
+}
+
+model Quest {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String
+  type        String   // "problems_solved", "xp_earned", "streak_days", "correct_streak"
+  targetValue Int
+  xpReward    Int
+  isActive    Boolean  @default(true)
+
+  userQuests  UserQuest[]
+}
+
+model UserQuest {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questId     String
+  quest       Quest    @relation(fields: [questId], references: [id], onDelete: Cascade)
+  progress    Int      @default(0)
+  completed   Boolean  @default(false)
+  completedAt DateTime?
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, questId])
 }

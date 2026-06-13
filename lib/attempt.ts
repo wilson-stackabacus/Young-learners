@@ -109,10 +109,12 @@ export interface NextProblemResult {
 export async function pickNextProblem(
   prisma: PrismaClient,
   userId: string,
+  subject: string = "math",
   rng: () => number = Math.random,
 ): Promise<NextProblemResult | null> {
   const [topics, masteries, recentAttempts] = await Promise.all([
     prisma.topic.findMany({
+      where: { subject },
       include: { prerequisites: { select: { id: true } } },
       orderBy: [{ order: "asc" }, { name: "asc" }],
     }),
@@ -256,6 +258,7 @@ export interface AttemptResult {
   streak: { current: number; longest: number; usedFreeze: boolean; broke: boolean };
   newBadges: NewBadge[];
   newlyUnlocked: { id: string; name: string; slug: string }[];
+  newlyCompletedQuests: { id: string; title: string; xpReward: number }[];
 }
 
 export async function submitAttempt(
@@ -381,6 +384,21 @@ export async function submitAttempt(
     // Evaluate badges.
     const newBadges = await evaluateAndAwardBadges(tx, user.id, allTopics, updatedMasteries, newTotalXp, lvl.level, streakUpd);
 
+    // Evaluate quests.
+    const { newlyCompletedQuests, finalTotalXp, finalLevel } = await evaluateAndAwardQuests(
+      tx,
+      user.id,
+      check.correct,
+      xp.total,
+      problem.topicId,
+      mastery.rating,
+      masteryUpd.ratingAfter,
+      newTotalXp,
+      lvl.level
+    );
+
+    const finalLeveledUp = finalLevel > user.level;
+
     return {
       correct: check.correct,
       xpAwarded: xp.total,
@@ -390,8 +408,8 @@ export async function submitAttempt(
       ratingDelta: masteryUpd.delta,
       problemRatingBefore: problemUpd.ratingBefore,
       problemRatingAfter: problemUpd.ratingAfter,
-      newLevel: lvl.level,
-      leveledUp,
+      newLevel: finalLevel,
+      leveledUp: finalLeveledUp,
       streak: {
         current: streakUpd.currentStreak,
         longest: streakUpd.longestStreak,
@@ -400,6 +418,7 @@ export async function submitAttempt(
       },
       newBadges,
       newlyUnlocked,
+      newlyCompletedQuests,
     };
   });
 }
@@ -485,4 +504,118 @@ async function evaluateAndAwardBadges(
     data: earned.map((b) => ({ userId, badgeId: b.badgeId })),
   });
   return earned;
+}
+
+async function evaluateAndAwardQuests(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  currentAttemptCorrect: boolean,
+  currentAttemptXp: number,
+  topicId: string,
+  masteryBefore: number,
+  masteryAfter: number,
+  xpEarnedSoFar: number,
+  levelSoFar: number
+): Promise<{ newlyCompletedQuests: { id: string; title: string; xpReward: number }[]; finalTotalXp: number; finalLevel: number }> {
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+
+  const [quests, attemptsToday, allMasteries] = await Promise.all([
+    tx.quest.findMany({ where: { isActive: true } }),
+    tx.attempt.findMany({
+      where: { userId, createdAt: { gte: todayStart } },
+      orderBy: { createdAt: "asc" }
+    }),
+    tx.mastery.findMany({ where: { userId } })
+  ]);
+
+  const solvedCountAfter = attemptsToday.filter((a) => a.correct).length;
+  const xpEarnedAfter = attemptsToday.reduce((sum, a) => sum + a.xpAwarded, 0);
+
+  let runAfter = 0;
+  let bestStreakAfter = 0;
+  for (const a of attemptsToday) {
+    if (a.correct) {
+      runAfter++;
+      bestStreakAfter = Math.max(bestStreakAfter, runAfter);
+    } else {
+      runAfter = 0;
+    }
+  }
+
+  const maxRatingAfter = allMasteries.length > 0 ? Math.max(...allMasteries.map((m) => m.rating)) : 1000;
+
+  // Now reconstruct state BEFORE this attempt
+  const solvedCountBefore = solvedCountAfter - (currentAttemptCorrect ? 1 : 0);
+  const xpEarnedBefore = xpEarnedAfter - currentAttemptXp;
+
+  const attemptsBefore = attemptsToday.slice(0, -1);
+  let runBefore = 0;
+  let bestStreakBefore = 0;
+  for (const a of attemptsBefore) {
+    if (a.correct) {
+      runBefore++;
+      bestStreakBefore = Math.max(bestStreakBefore, runBefore);
+    } else {
+      runBefore = 0;
+    }
+  }
+
+  // Find max rating before this attempt
+  const masteriesBefore = allMasteries.map((m) =>
+    m.topicId === topicId ? { ...m, rating: masteryBefore } : m
+  );
+  const maxRatingBefore = masteriesBefore.length > 0 ? Math.max(...masteriesBefore.map((m) => m.rating)) : 1000;
+
+  const newlyCompleted = [];
+  for (const q of quests) {
+    let completedBefore = false;
+    let completedAfter = false;
+
+    if (q.type === "problems_solved") {
+      completedBefore = solvedCountBefore >= q.targetValue;
+      completedAfter = solvedCountAfter >= q.targetValue;
+    } else if (q.type === "xp_earned") {
+      completedBefore = xpEarnedBefore >= q.targetValue;
+      completedAfter = xpEarnedAfter >= q.targetValue;
+    } else if (q.type === "correct_streak") {
+      completedBefore = bestStreakBefore >= q.targetValue;
+      completedAfter = bestStreakAfter >= q.targetValue;
+    } else if (q.type === "master_1_topic") {
+      completedBefore = maxRatingBefore >= q.targetValue;
+      completedAfter = maxRatingAfter >= q.targetValue;
+    }
+
+    if (completedAfter && !completedBefore) {
+      newlyCompleted.push({
+        id: q.id,
+        title: q.title,
+        xpReward: q.xpReward,
+      });
+    }
+  }
+
+  let finalTotalXp = xpEarnedSoFar;
+  let finalLevel = levelSoFar;
+
+  if (newlyCompleted.length > 0) {
+    const totalQuestXp = newlyCompleted.reduce((sum, q) => sum + q.xpReward, 0);
+    finalTotalXp += totalQuestXp;
+    const { levelForTotalXp } = require("./gamification/xp");
+    finalLevel = levelForTotalXp(finalTotalXp).level;
+
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        totalXp: finalTotalXp,
+        level: finalLevel,
+      },
+    });
+  }
+
+  return {
+    newlyCompletedQuests: newlyCompleted,
+    finalTotalXp,
+    finalLevel,
+  };
 }
