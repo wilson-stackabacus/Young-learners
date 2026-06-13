@@ -1,0 +1,115 @@
+# ───────────────────────────────────────────────
+# macOS
+# ───────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.DocumentRevisions-V100
+Icon?
+
+# ───────────────────────────────────────────────
+# Windows
+# ───────────────────────────────────────────────
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ───────────────────────────────────────────────
+# Editors / IDEs
+# ───────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ───────────────────────────────────────────────
+# Node / JavaScript / TypeScript
+# ───────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
+.npm
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+*.tsbuildinfo
+
+# Build / framework output (Next.js, Vite, etc.)
+dist/
+build/
+out/
+.next/
+.nuxt/
+.turbo/
+.svelte-kit/
+.vite/
+.cache/
+coverage/
+.nyc_output/
+
+# ───────────────────────────────────────────────
+# Environment / secrets
+# ───────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+
+# ───────────────────────────────────────────────
+# Database (local dev)
+# ───────────────────────────────────────────────
+*.sqlite
+*.sqlite3
+*.db
+/prisma/*.db
+/prisma/*.db-journal
+
+# ───────────────────────────────────────────────
+# Python (optional services / scripts)
+# ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ───────────────────────────────────────────────
+# Logs / temp / misc
+# ───────────────────────────────────────────────
+*.log
+logs/
+tmp/
+temp/
+.DS_Store
