@@ -12,7 +12,7 @@ export async function GET() {
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
 
-  const [attemptsToday, userMasteries] = await Promise.all([
+  const [attemptsToday, userProgress] = await Promise.all([
     prisma.attempt.findMany({
       where: {
         userId: user.id,
@@ -20,13 +20,13 @@ export async function GET() {
       },
       orderBy: { createdAt: "asc" },
     }),
-    prisma.mastery.findMany({
+    prisma.levelProgress.findMany({
       where: { userId: user.id },
     }),
   ]);
 
-  const solvedCount = attemptsToday.filter((a) => a.correct).length;
-  const xpEarned = attemptsToday.reduce((sum, a) => sum + a.xpAwarded, 0);
+  const solvedCount = attemptsToday.filter((a: any) => a.correct).length;
+  const xpEarned = attemptsToday.reduce((sum: number, a: any) => sum + a.xpAwarded, 0);
 
   // Correct streak today
   let currentStreakToday = 0;
@@ -42,7 +42,7 @@ export async function GET() {
     }
   }
 
-  const maxRating = userMasteries.length > 0 ? Math.max(...userMasteries.map((m) => m.rating)) : 1000;
+  const maxProgress = userProgress.length > 0 ? Math.max(...userProgress.map((p: any) => p.progress)) : 0;
 
   const questStatuses = quests.map((q) => {
     let progress = 0;
@@ -52,9 +52,8 @@ export async function GET() {
       progress = xpEarned;
     } else if (q.type === "correct_streak") {
       progress = maxStreakToday;
-    } else if (q.type === "master_1_topic") {
-      // Return 1 if reached 1100, 0 otherwise, or actual max rating scale
-      progress = maxRating >= q.targetValue ? q.targetValue : maxRating;
+    } else if (q.type === "clear_level") {
+      progress = maxProgress;
     }
 
     const completed = progress >= q.targetValue;

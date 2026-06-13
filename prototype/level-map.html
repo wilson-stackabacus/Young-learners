@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Questline — World Map (prototype)</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap');
+body{margin:0;padding:18px;background:#eef4f8;}
+.ql-root{font-family:'Fredoka',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#22313f;max-width:1100px;margin:0 auto;}
+.ql-root *{box-sizing:border-box;}
+.ql-head{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:16px;padding:14px 16px;margin-bottom:10px;box-shadow:0 2px 12px rgba(0,0,0,.06);}
+.ql-title{font-size:21px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;}
+.ql-sub{font-size:13px;color:#6b7a89;margin:3px 0 12px;}
+.ql-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.ql-jump{border:none;border-radius:999px;padding:6px 13px;font-family:inherit;font-size:13px;font-weight:600;color:#fff;cursor:pointer;opacity:.93;transition:transform .1s;}
+.ql-jump:hover{transform:translateY(-1px);opacity:1;}
+.ql-legend{display:flex;gap:14px;margin-left:auto;font-size:12px;color:#6b7a89;align-items:center;flex-wrap:wrap;}
+.ql-dot{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:5px;vertical-align:-1px;}
+.ql-info{margin-top:10px;font-size:13.5px;background:#f3f7fb;border-radius:10px;padding:9px 12px;min-height:20px;line-height:1.5;}
+.ql-scroll{position:relative;overflow-x:auto;overflow-y:hidden;border-radius:16px;border:1px solid rgba(0,0,0,.08);-webkit-overflow-scrolling:touch;background:#bfeaff;box-shadow:0 2px 12px rgba(0,0,0,.06);}
+.ql-stage{position:relative;height:440px;}
+.ql-world{position:absolute;top:0;bottom:0;overflow:hidden;}
+.ql-cloud{position:absolute;background:rgba(255,255,255,.85);border-radius:50%;}
+.ql-banner{position:absolute;top:14px;left:16px;font-weight:700;font-size:15px;color:#fff;background:rgba(0,0,0,.30);padding:6px 14px;border-radius:999px;white-space:nowrap;z-index:2;}
+.ql-path{position:absolute;left:0;top:0;pointer-events:none;}
+.ql-node{position:absolute;width:54px;height:54px;border-radius:50%;border:4px solid rgba(0,0,0,.12);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;font-family:inherit;cursor:pointer;box-shadow:0 4px 8px rgba(0,0,0,.22);transition:transform .12s;z-index:3;color:#fff;}
+.ql-node:hover{transform:scale(1.14);}
+.ql-node.selected{outline:3px solid #fff;outline-offset:2px;}
+.ql-done{background:radial-gradient(circle at 35% 30%,#ffe07a,#f5a623);color:#7a4500;border-color:#e08e00;}
+.ql-current{background:radial-gradient(circle at 35% 30%,#9be873,#36a636);border-color:#2e8a2e;animation:qlpulse 1.5s ease-in-out infinite;}
+.ql-locked{background:radial-gradient(circle at 35% 30%,#dadada,#a9a9a9);color:#f3f3f3;border-color:#9a9a9a;}
+@keyframes qlpulse{0%,100%{box-shadow:0 4px 8px rgba(0,0,0,.22),0 0 0 0 rgba(54,166,54,.5);}50%{box-shadow:0 4px 8px rgba(0,0,0,.22),0 0 0 11px rgba(54,166,54,0);}}
+.ql-stars{position:absolute;display:flex;gap:1px;font-size:13px;line-height:1;z-index:3;transform:translateX(-50%);}
+.ql-star{color:#ffd34d;text-shadow:0 1px 1px rgba(0,0,0,.3);}
+.ql-star.off{color:rgba(255,255,255,.6);}
+.ql-bird{position:absolute;font-size:22px;z-index:4;transform:translateX(-50%);animation:qlbob 1.1s ease-in-out infinite;pointer-events:none;}
+@keyframes qlbob{0%,100%{transform:translate(-50%,0);}50%{transform:translate(-50%,-6px);}}
+.ql-lock{position:absolute;font-size:12px;transform:translate(9px,-9px);}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;}
+</style>
+</head>
+<body>
+<div class="ql-root" id="qlRoot">
+  <h2 class="sr-only">A scrollable Angry-Birds-style world map of 225 learning levels, grouped into four themed biomes from arithmetic to algebra. Each level node shows completed, current, or locked state; tap one to see its skill mix.</h2>
+  <div class="ql-head">
+    <h1 class="ql-title">🎯 Questline — World Map</h1>
+    <p class="ql-sub">225 levels · 45 difficulty steps (alternating pure skill &amp; blended) × 5 stages each · scroll sideways to explore</p>
+    <div class="ql-row" id="qlJumps"></div>
+    <div class="ql-info" id="qlInfo">Loading map…</div>
+    <div class="ql-row" style="margin-top:8px;">
+      <div class="ql-legend">
+        <span><span class="ql-dot" style="background:#f5a623"></span>Cleared</span>
+        <span><span class="ql-dot" style="background:#36a636"></span>Current</span>
+        <span><span class="ql-dot" style="background:#a9a9a9"></span>Locked</span>
+      </div>
+    </div>
+  </div>
+  <div class="ql-scroll" id="qlScroll"></div>
+</div>
+<script>
+(function(){
+  const root = document.getElementById('qlRoot');
+  const scrollEl = root.querySelector('#qlScroll');
+  const info = root.querySelector('#qlInfo');
+  const jumps = root.querySelector('#qlJumps');
+
+  const SKILLS = ["Addition","Subtraction","Add & subtract","Multiplication","Subtract & multiply","Division","Multiply & divide","All four mixed","Order of operations","Negatives (+/−)","Negatives (×/÷)","Fractions (+/−)","Fractions (×/÷)","Decimals & percents","Exponents & roots","One-step equations","Two-step equations","Combine like terms & distribute","Multi-step equations","Linear equations (with fractions)","Systems of equations","Factoring","Quadratics (rational roots)"];
+  const WORLDS = [
+    {name:"Arithmetic",          icon:"🌱", sky:"#bfecff", skyB:"#8fd6f5", ground:"#8ed24f", ground2:"#5fb23e", hill:"#4f9e30", btn:"#56a838"},
+    {name:"Integers & rationals",icon:"🍂", sky:"#ffe8bf", skyB:"#ffcf86", ground:"#e3ad5c", ground2:"#cf963f", hill:"#b07c2c", btn:"#cf963f"},
+    {name:"Pre-algebra",         icon:"⛰️", sky:"#dcefff", skyB:"#b6dcf6", ground:"#eaf4ff", ground2:"#cfe6f7", hill:"#aacbe6", btn:"#6fa6d0"},
+    {name:"Algebra 1",           icon:"🚀", sky:"#241d4a", skyB:"#33285f", ground:"#473a73", ground2:"#392e61", hill:"#2c2350", btn:"#6354b0"}
+  ];
+
+  const SPACING=120, AMP=82, BASE=205, PAD=80, STAGE_H=440, TOTAL=225, COMPLETED=38;
+  const worldIdx = s => s<=9?0 : s<=15?1 : s<=19?2 : 3;
+  const pos = i => ({x: PAD + i*SPACING, y: BASE + AMP*Math.sin(i*0.62)});
+  const TOTAL_W = PAD*2 + (TOTAL-1)*SPACING;
+
+  // Build the 225 stages: 45 difficulty tiers (odd = pure skill, even = blend) × 5 stages.
+  const stages=[]; let n=0;
+  for(let t=1;t<=45;t++){
+    const isPure = t%2===1;
+    const low = Math.ceil(t/2);                 // pure skill, or lower skill of a blend
+    const skills = isPure ? [low] : [low, low+1];
+    const w = worldIdx(low);
+    for(let s=1;s<=5;s++){ n++; stages.push({n,t,s,isPure,skills,w}); }
+  }
+
+  // World index ranges (stages are contiguous per world)
+  const wr=[{},{},{},{}];
+  stages.forEach((st,i)=>{ const r=wr[st.w]; if(r.min===undefined) r.min=i; r.max=i; });
+  const boundLeft  = w => w===0 ? 0 : (pos(wr[w].min).x + pos(wr[w].min-1).x)/2;
+  const boundRight = w => w===3 ? TOTAL_W : (pos(wr[w].max).x + pos(wr[w].max+1).x)/2;
+
+  const hill = color => "url(\"data:image/svg+xml," + encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' width='420' height='150'><path d='M0,150 L0,80 Q60,30 120,62 T240,58 T360,60 T420,55 L420,150 Z' fill='"+color+"'/></svg>"
+  ) + "\")";
+
+  // Biome panels
+  let html='';
+  WORLDS.forEach((W,wi)=>{
+    const L=boundLeft(wi), R=boundRight(wi), width=R-L;
+    const bg=`linear-gradient(to bottom, ${W.sky}, ${W.skyB} 48%, ${W.ground} 74%, ${W.ground2})`;
+    let deco='';
+    if(wi===3){ // starfield
+      const stars=Math.floor(width/26);
+      for(let k=0;k<stars;k++){ const sx=Math.random()*width, sy=14+Math.random()*210, sz=1+Math.random()*2;
+        deco+=`<span class="ql-cloud" style="left:${sx.toFixed(0)}px;top:${sy.toFixed(0)}px;width:${sz.toFixed(1)}px;height:${sz.toFixed(1)}px;opacity:.9"></span>`; }
+    } else {
+      const clouds=Math.max(2,Math.floor(width/340));
+      for(let k=0;k<clouds;k++){ const cx=40+Math.random()*(width-140), cy=16+Math.random()*72, cw=50+Math.random()*60;
+        deco+=`<span class="ql-cloud" style="left:${cx.toFixed(0)}px;top:${cy.toFixed(0)}px;width:${cw.toFixed(0)}px;height:${(cw*0.42).toFixed(0)}px;"></span>`; }
+    }
+    const hills=`background-image:${hill(W.hill)},${hill(W.ground2)};background-repeat:repeat-x,repeat-x;background-position:left bottom,left bottom;background-size:420px 150px,360px 112px;`;
+    html+=`<div class="ql-world" style="left:${L.toFixed(0)}px;width:${width.toFixed(0)}px;background:${bg};">
+      <div style="position:absolute;left:0;right:0;bottom:0;height:150px;${hills}"></div>
+      ${deco}
+      <div class="ql-banner">${W.icon} ${W.name}</div>
+    </div>`;
+  });
+
+  // Winding trail
+  let d='M '+pos(0).x.toFixed(1)+' '+pos(0).y.toFixed(1);
+  for(let i=1;i<TOTAL;i++) d+=' L '+pos(i).x.toFixed(1)+' '+pos(i).y.toFixed(1);
+  html+=`<svg class="ql-path" width="${TOTAL_W}" height="${STAGE_H}">
+    <path d="${d}" fill="none" stroke="rgba(0,0,0,.13)" stroke-width="10" stroke-linecap="round"/>
+    <path d="${d}" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-dasharray="1 15" opacity=".92"/>
+  </svg>`;
+
+  // Nodes + stars + the "you are here" bird
+  stages.forEach((st,i)=>{
+    const p=pos(i), left=(p.x-27).toFixed(1), top=(p.y-27).toFixed(1);
+    let cls='ql-locked';
+    if(st.n<=COMPLETED) cls='ql-done';
+    else if(st.n===COMPLETED+1) cls='ql-current';
+    const lock = cls==='ql-locked' ? '<span class="ql-lock">🔒</span>' : '';
+    html+=`<button class="ql-node ${cls}" data-n="${st.n}" style="left:${left}px;top:${top}px;" aria-label="Stage ${st.n}">${st.n}${lock}</button>`;
+    if(cls==='ql-done'){
+      const s=1+((st.n*7+3)%3); let stars='';
+      for(let k=0;k<3;k++) stars+=`<span class="ql-star${k<s?'':' off'}">★</span>`;
+      html+=`<div class="ql-stars" style="left:${p.x.toFixed(1)}px;top:${(p.y+30).toFixed(1)}px;">${stars}</div>`;
+    }
+    if(cls==='ql-current') html+=`<div class="ql-bird" style="left:${p.x.toFixed(1)}px;top:${(p.y-58).toFixed(1)}px;">🐦</div>`;
+  });
+
+  const stage=document.createElement('div');
+  stage.className='ql-stage';
+  stage.style.width=TOTAL_W+'px';
+  stage.innerHTML=html;
+  scrollEl.appendChild(stage);
+
+  // Jump buttons
+  WORLDS.forEach((W,wi)=>{
+    const b=document.createElement('button');
+    b.className='ql-jump'; b.style.background=W.btn; b.textContent=`${W.icon} ${W.name}`;
+    b.onclick=()=>scrollEl.scrollTo({left:Math.max(0,boundLeft(wi)-30),behavior:'smooth'});
+    jumps.appendChild(b);
+  });
+
+  // Selection + info
+  let selected=null;
+  function showInfo(num){
+    const st=stages[num-1], W=WORLDS[st.w];
+    const diff = st.isPure ? ('Lv '+st.skills[0]) : ('Lv '+st.skills[0]+'½');
+    const skillTxt = st.isPure
+      ? `<b>Skill ${st.skills[0]} — ${SKILLS[st.skills[0]-1]}</b>`
+      : `<b>Blend of skills ${st.skills[0]} & ${st.skills[1]}</b> — ${SKILLS[st.skills[0]-1]} + ${SKILLS[st.skills[1]-1]}`;
+    const status = num<=COMPLETED ? ('✅ Cleared · '+(1+((num*7+3)%3))+'★')
+                  : num===COMPLETED+1 ? '🐦 You are here'
+                  : '🔒 Locked — clear earlier stages to unlock';
+    info.innerHTML = `<b>Stage ${num} / 225</b> &nbsp;·&nbsp; ${diff} &nbsp;·&nbsp; ${W.icon} ${W.name}<br>${skillTxt} &nbsp;·&nbsp; ${status}`;
+    if(selected) selected.classList.remove('selected');
+    selected = scrollEl.querySelector(`.ql-node[data-n="${num}"]`);
+    if(selected) selected.classList.add('selected');
+  }
+  scrollEl.addEventListener('click', e=>{
+    const el=e.target.closest('.ql-node'); if(el) showInfo(+el.dataset.n);
+  });
+
+  showInfo(COMPLETED+1);
+  scrollEl.scrollLeft = Math.max(0, pos(COMPLETED).x - 220);
+})();
+</script>
+</body>
+</html>

@@ -19,7 +19,6 @@ export async function GET() {
                 displayName: true,
                 username: true,
                 totalXp: true,
-                level: true,
               },
             },
           },

@@ -3,11 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import XpBar from "@/components/XpBar";
 import StreakBadge from "@/components/StreakBadge";
-import ProblemCard, { type ProblemView } from "@/components/ProblemCard";
-import TopicMap from "@/components/TopicMap";
-import BadgeCase from "@/components/BadgeCase";
-import RecentFeed, { type RecentRow } from "@/components/RecentFeed";
-import FeedbackToast, { type Feedback } from "@/components/FeedbackToast";
+import type { LevelState, MapResponse, Problem, Stats, WorldId, WorldMeta, BossState, ProblemResponse, AnswerResponse } from "@/shared/contract";
 
 export interface UserState {
   id: string;
@@ -15,23 +11,10 @@ export interface UserState {
   displayName: string;
   role: string;
   totalXp: number;
-  level: number;
+  level: number; // calculated from XP
   currentStreak: number;
   longestStreak: number;
   freezesAvailable: number;
-}
-
-export interface TopicRow {
-  id: string;
-  slug: string;
-  name: string;
-  subject: string;
-  baseRating: number;
-  rating: number;
-  solved: number;
-  attempts: number;
-  unlocked: boolean;
-  prereqSlugs: string[];
 }
 
 export interface BadgeRow {
@@ -41,15 +24,6 @@ export interface BadgeRow {
   description: string;
   tier: string;
   owned: boolean;
-}
-
-interface Props {
-  user: UserState & { role: string };
-  topics: TopicRow[];
-  topicNames: Record<string, string>;
-  topicSlugs: Record<string, string>;
-  badges: BadgeRow[];
-  recent: RecentRow[];
 }
 
 interface QuestStatus {
@@ -97,7 +71,7 @@ interface ClassroomDetails {
     level: number;
     currentStreak: number;
     joinedAt: string;
-    mastery: Record<string, number>;
+    mastery: Record<string, number>; // stage -> progress
   }[];
   topics: {
     id: string;
@@ -108,75 +82,95 @@ interface ClassroomDetails {
   }[];
 }
 
-export default function HomeClient({
-  user: initialUser,
-  topics: initialTopics,
-  topicNames,
-  topicSlugs,
-  badges: initialBadges,
-  recent: initialRecent,
-}: Props) {
-  const [user, setUser] = useState<UserState>(initialUser);
-  const [topics, setTopics] = useState<TopicRow[]>(initialTopics);
-  const [badges, setBadges] = useState<BadgeRow[]>(initialBadges);
-  const [recent, setRecent] = useState<RecentRow[]>(initialRecent);
-  const [problem, setProblem] = useState<ProblemView | null>(null);
-  const [loadingProblem, setLoadingProblem] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [targetMastery, setTargetMastery] = useState<number | null>(null);
-  const [userMastery, setUserMastery] = useState<number | null>(null);
+const WORLD_COLOR: Record<WorldId, string> = {
+  arithmetic: "from-cyan-500 to-blue-500",
+  integers: "from-purple-500 to-indigo-500",
+  "pre-algebra": "from-amber-500 to-orange-500",
+  "algebra-1": "from-rose-500 to-pink-500",
+};
 
-  // Expanded UI States
+const WORLD_ICON: Record<WorldId, string> = {
+  arithmetic: "📐",
+  integers: "➖",
+  "pre-algebra": "✖️",
+  "algebra-1": "🔥",
+};
+
+const NODE_THEME = {
+  locked: { bg: "bg-white/5 border-white/10 text-muted", color: "text-muted" },
+  current: { bg: "bg-accent border-accent/50 text-white shadow-[0_0_15px_rgba(124,92,255,0.4)] animate-pulse", color: "text-white" },
+  cleared: { bg: "bg-accent2 border-accent2/50 text-black shadow-[0_0_10px_rgba(34,211,238,0.2)]", color: "text-accent2" },
+};
+
+export default function HomeClient() {
+  // Navigation Tabs
   const [activeTab, setActiveTab] = useState<"learn" | "quests" | "leaderboard" | "classroom">("learn");
-  const [activeSubject, setActiveSubject] = useState<"math" | "computer_science">("math");
 
-  // Quest states
+  // User summary & Map state
+  const [mapData, setMapData] = useState<MapResponse | null>(null);
+  const [loadingMap, setLoadingMap] = useState(true);
+
+  // Active play level state
+  const [view, setView] = useState<"map" | "play">("map");
+  const [activeStage, setActiveStage] = useState<number | null>(null);
+  const [levelInfo, setLevelInfo] = useState<LevelState | null>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [bossState, setBossState] = useState<BossState | null>(null);
+  const [loadingPlay, setLoadingPlay] = useState(false);
+
+  // Answering states
+  const [inputAnswer, setInputAnswer] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    correct: boolean;
+    state: "hint" | "solved" | "revealed";
+    hint?: string;
+    solution?: string;
+  } | null>(null);
+  const [attemptsRemaining, setAttemptsRemaining] = useState(2);
+  const [xpGained, setXpGained] = useState<number | null>(null);
+  const [progressDelta, setProgressDelta] = useState<number | null>(null);
+
+  // Expanded Features states
   const [quests, setQuests] = useState<QuestStatus[]>([]);
   const [loadingQuests, setLoadingQuests] = useState(false);
 
-  // Leaderboard states
   const [leaderboard, setLeaderboard] = useState<LeaderboardUser[]>([]);
   const [userRank, setUserRank] = useState<number | null>(null);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
 
-  // Classroom states
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [loadingClassrooms, setLoadingClassrooms] = useState(false);
   const [selectedClassroom, setSelectedClassroom] = useState<ClassroomDetails | null>(null);
   const [loadingClassroomDetails, setLoadingClassroomDetails] = useState(false);
+
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [newClassNameInput, setNewClassNameInput] = useState("");
   const [classroomFeedback, setClassroomFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  // Load next problem based on subject
-  const loadProblem = useCallback(async () => {
-    setLoadingProblem(true);
-    setFeedback(null);
+  // Mock roles locally for testing student/teacher views easily
+  const [localRole, setLocalRole] = useState<string>("student");
+
+  // Fetch me & map data on mount
+  const loadMap = useCallback(async () => {
+    setLoadingMap(true);
     try {
-      const res = await fetch(`/api/next-problem?subject=${activeSubject}`, { cache: "no-store" });
-      if (!res.ok) {
-        setProblem(null);
-        return;
+      const res = await fetch("/api/map", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as MapResponse;
+        setMapData(data);
       }
-      const data = (await res.json()) as {
-        problem: ProblemView;
-        targetMastery: number;
-        userMastery: number;
-      };
-      setProblem(data.problem);
-      setTargetMastery(data.targetMastery);
-      setUserMastery(data.userMastery);
-    } catch {
-      setProblem(null);
+    } catch (e) {
+      console.error("Failed to load map data", e);
     } finally {
-      setLoadingProblem(false);
+      setLoadingMap(false);
     }
-  }, [activeSubject]);
+  }, []);
 
   useEffect(() => {
-    void loadProblem();
-  }, [activeSubject, loadProblem]);
+    void loadMap();
+  }, [loadMap]);
 
   // Load quests
   const loadQuests = useCallback(async () => {
@@ -227,7 +221,7 @@ export default function HomeClient({
     }
   }, []);
 
-  // Fetch data on tab change
+  // Sync tab data
   useEffect(() => {
     if (activeTab === "quests") {
       void loadQuests();
@@ -239,19 +233,115 @@ export default function HomeClient({
     }
   }, [activeTab, loadQuests, loadLeaderboard, loadClassrooms]);
 
-  // Load specific classroom details
-  const viewClassroomDetails = async (id: string) => {
-    setLoadingClassroomDetails(true);
+  // Open a level to play
+  const openLevel = async (stage: number) => {
+    setLoadingPlay(true);
+    setFeedback(null);
+    setInputAnswer("");
+    setXpGained(null);
+    setProgressDelta(null);
     try {
-      const res = await fetch(`/api/classrooms/${id}`);
+      const res = await fetch(`/api/levels/${stage}/problem`, { cache: "no-store" });
       if (res.ok) {
-        const data = (await res.json()) as ClassroomDetails;
-        setSelectedClassroom(data);
+        const data = (await res.json()) as ProblemResponse;
+        setLevelInfo(data.level as LevelState);
+        setProblem(data.problem);
+        setStats(data.stats);
+        setBossState(data.boss || null);
+        setAttemptsRemaining(data.boss ? 1 : 2); // default hints remaining
+        setActiveStage(stage);
+        setView("play");
       }
-    } catch {
-      console.error("Failed to load classroom details");
+    } catch (e) {
+      console.error("Failed to load problem", e);
     } finally {
-      setLoadingClassroomDetails(false);
+      setLoadingPlay(false);
+    }
+  };
+
+  const backToMap = () => {
+    setView("map");
+    setActiveStage(null);
+    setLevelInfo(null);
+    setProblem(null);
+    setStats(null);
+    setBossState(null);
+    setFeedback(null);
+    void loadMap(); // reload map to reflect progress
+  };
+
+  // Submit Answer
+  const handleAnswerSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!problem || !inputAnswer.trim() || submitting) return;
+    setSubmitting(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/levels/${problem.stage}/answer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: problem.token, answer: inputAnswer.trim() }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as AnswerResponse;
+        setFeedback({
+          correct: data.correct,
+          state: data.state,
+          hint: data.hint,
+          solution: data.solution,
+        });
+        setStats(data.stats);
+        setBossState(data.boss || null);
+        setAttemptsRemaining(data.attemptsRemaining);
+        setXpGained(data.stats.xpGained);
+        setProgressDelta(data.stats.progressDelta);
+
+        // Update overall user XP in main map header state if loaded
+        if (mapData) {
+          setMapData({
+            ...mapData,
+            user: {
+              ...mapData.user,
+              totalXp: data.stats.totalXp,
+              streakDays: data.stats.streakDays,
+            },
+          });
+        }
+
+        // If solved or revealed, clear input
+        if (data.state === "solved" || data.state === "revealed") {
+          setInputAnswer("");
+        }
+      }
+    } catch (err) {
+      console.error("Submission failed", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Move to next problem
+  const handleNextProblem = async () => {
+    if (!activeStage) return;
+    setFeedback(null);
+    setInputAnswer("");
+    setXpGained(null);
+    setProgressDelta(null);
+    setLoadingPlay(true);
+    try {
+      const res = await fetch(`/api/levels/${activeStage}/problem`, { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as ProblemResponse;
+        setLevelInfo(data.level as LevelState);
+        setProblem(data.problem);
+        setStats(data.stats);
+        setBossState(data.boss || null);
+        setAttemptsRemaining(data.boss ? 1 : 2);
+      }
+    } catch (e) {
+      console.error("Failed to load next problem", e);
+    } finally {
+      setLoadingPlay(false);
     }
   };
 
@@ -279,7 +369,7 @@ export default function HomeClient({
     }
   };
 
-  // Create Classroom (Teacher Only)
+  // Create Classroom
   const handleCreateClassroom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassNameInput.trim()) return;
@@ -294,8 +384,7 @@ export default function HomeClient({
       if (res.ok && data.success) {
         setClassroomFeedback({ type: "success", message: `Classroom created: ${data.classroom?.name} (Code: ${data.classroom?.code})` });
         setNewClassNameInput("");
-        // Ensure user state reflects potential role promotion
-        setUser((u) => ({ ...u, role: "teacher" }));
+        setLocalRole("teacher");
         void loadClassrooms();
       } else {
         setClassroomFeedback({ type: "error", message: data.error || "Failed to create classroom" });
@@ -305,167 +394,86 @@ export default function HomeClient({
     }
   };
 
-  // Toggle user role between Student and Teacher for demonstration
-  const handleToggleRole = async () => {
-    const nextRole = user.role === "student" ? "teacher" : "student";
-    // We can simulate role update via an API call or simply toggle it locally.
-    // Let's create an action in database via a classroom POST create which auto-promotes,
-    // or just toggle it directly if they make classrooms. Let's do a direct update.
-    // Let's call /api/classrooms with a dummy payload or let's create a local role switch.
-    // Let's do a direct state switch, and when they load classrooms, they will get what is configured.
-    // Wait, to make it permanent, we should update the database. We can write a quick role switch endpoint,
-    // or just do a classroom create that promotes. Let's update state, and let them create a class to become teacher officially.
-    if (nextRole === "teacher") {
-      setUser((u) => ({ ...u, role: "teacher" }));
-    } else {
-      setUser((u) => ({ ...u, role: "student" }));
+  // Load specific classroom details
+  const viewClassroomDetails = async (id: string) => {
+    setLoadingClassroomDetails(true);
+    try {
+      const res = await fetch(`/api/classrooms/${id}`);
+      if (res.ok) {
+        const data = (await res.json()) as ClassroomDetails;
+        setSelectedClassroom(data);
+      }
+    } catch {
+      console.error("Failed to load classroom details");
+    } finally {
+      setLoadingClassroomDetails(false);
     }
-    setSelectedClassroom(null);
-    setClassroomFeedback(null);
-    // Trigger reloading classrooms under the new role context
-    setTimeout(() => void loadClassrooms(), 100);
   };
 
-  const onSubmit = useCallback(
-    async (answer: string, timeMs: number, usedHint: boolean) => {
-      if (!problem) return;
-      setSubmitting(true);
-      try {
-        const res = await fetch("/api/attempt", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ problemId: problem.id, answer, timeMs, usedHint }),
-        });
-        if (!res.ok) {
-          setFeedback({ kind: "error", title: "Submission failed", body: "Please try again." });
-          return;
-        }
-        const data = (await res.json()) as {
-          correct: boolean;
-          xpAwarded: number;
-          xpBreakdown: { base: number; speed: number; hint: number; streak: number; total: number };
-          ratingBefore: number;
-          ratingAfter: number;
-          ratingDelta: number;
-          newLevel: number;
-          leveledUp: boolean;
-          streak: { current: number; longest: number; usedFreeze: boolean; broke: boolean };
-          newBadges: { badgeId: string; slug: string; name: string; tier: string }[];
-          newlyUnlocked: { id: string; name: string; slug: string }[];
-          newlyCompletedQuests: { id: string; title: string; xpReward: number }[];
-        };
+  // Toggle local role for testing
+  const handleToggleRole = () => {
+    const nextRole = localRole === "student" ? "teacher" : "student";
+    setLocalRole(nextRole);
+    setSelectedClassroom(null);
+    setClassroomFeedback(null);
+    // Reload classrooms list
+    setTimeout(() => void loadClassrooms(), 50);
+  };
 
-        setUser((u) => ({
-          ...u,
-          totalXp: u.totalXp + data.xpAwarded,
-          level: data.newLevel,
-          currentStreak: data.streak.current,
-          longestStreak: data.streak.longest,
-        }));
+  // Render Medal or Rank
+  const renderRankMedal = (rank: number) => {
+    if (rank === 1) return "🥇";
+    if (rank === 2) return "🥈";
+    if (rank === 3) return "🥉";
+    return `${rank}`;
+  };
 
-        setTopics((rows) =>
-          rows.map((r) =>
-            r.id === problem.topicId
-              ? {
-                  ...r,
-                  rating: data.ratingAfter,
-                  solved: r.solved + (data.correct ? 1 : 0),
-                  attempts: r.attempts + 1,
-                  unlocked: r.unlocked || data.ratingAfter >= 1100,
-                }
-              : r,
-          ),
-        );
-
-        if (data.newBadges.length) {
-          const newIds = new Set(data.newBadges.map((b) => b.badgeId));
-          setBadges((bs) => bs.map((b) => (newIds.has(b.id) ? { ...b, owned: true } : b)));
-        }
-
-        setRecent((rows) =>
-          [
-            {
-              id: Math.random().toString(),
-              correct: data.correct,
-              timeMs,
-              xpAwarded: data.xpAwarded,
-              createdAt: new Date().toISOString(),
-              problemPrompt: problem.prompt,
-              topicName: topicNames[problem.topicId] ?? "",
-              ratingAfter: data.ratingAfter,
-            },
-            ...rows,
-          ].slice(0, 10),
-        );
-
-        // Build celebratory toast body
-        let feedbackBody = data.correct
-          ? `+${data.xpAwarded} XP${data.leveledUp ? ` — Level ${data.newLevel}!` : ""}`
-          : `Mastery ${data.ratingBefore} → ${data.ratingAfter} (${data.ratingDelta >= 0 ? "+" : ""}${data.ratingDelta}). Try a hint or skip.`;
-
-        if (data.newBadges.length) {
-          feedbackBody += `  •  New badge: ${data.newBadges.map((b) => b.name).join(", ")}`;
-        }
-        if (data.newlyUnlocked.length) {
-          feedbackBody += `  •  Unlocked: ${data.newlyUnlocked.map((t) => t.name).join(", ")}`;
-        }
-        if (data.newlyCompletedQuests && data.newlyCompletedQuests.length > 0) {
-          feedbackBody += `  🎉 Quest Completed: ${data.newlyCompletedQuests.map((q) => q.title).join(", ")} (+${data.newlyCompletedQuests.reduce((sum, q) => sum + q.xpReward, 0)} XP)`;
-        }
-
-        setFeedback({
-          kind: data.correct ? "success" : "failure",
-          title: data.correct ? "Correct!" : "Not quite",
-          body: feedbackBody,
-          xpBreakdown: data.xpBreakdown,
-        });
-
-        // Trigger loading the next problem
-        setProblem(null);
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [problem, topicNames],
-  );
-
-  const headline = useMemo(() => {
-    return `${user.displayName} — Level ${user.level} (${user.role.toUpperCase()})`;
-  }, [user.displayName, user.level, user.role]);
-
-  // Filter topics for the active subject
-  const filteredTopics = useMemo(() => {
-    return topics.filter((t) => t.subject === activeSubject);
-  }, [topics, activeSubject]);
-
-  // Heatmap helper for cell colors based on ELO rating
-  const getHeatmapColor = (rating: number) => {
-    if (rating < 900) return "bg-red-500/20 text-red-400 border border-red-500/20";
-    if (rating < 1000) return "bg-orange-500/20 text-orange-400 border border-orange-500/20";
-    if (rating < 1100) return "bg-yellow-500/20 text-yellow-400 border border-yellow-500/20";
-    if (rating < 1350) return "bg-emerald-500/30 text-emerald-300 border border-emerald-500/30";
+  // Map ELO or levels progress color for Classroom Heatmap cells
+  const getProgressColor = (progress: number) => {
+    if (progress === 0) return "bg-white/5 text-muted border border-white/5";
+    if (progress < 40) return "bg-orange-500/20 text-orange-400 border border-orange-500/20";
+    if (progress < 80) return "bg-yellow-500/20 text-yellow-400 border border-yellow-500/20";
+    if (progress < 100) return "bg-emerald-500/30 text-emerald-300 border border-emerald-500/30";
     return "bg-cyan-500/40 text-cyan-200 border border-cyan-400/40 shadow-[0_0_8px_rgba(34,211,238,0.2)]";
   };
 
+  // Calculate dynamic level from total XP
+  const calculateLevel = (totalXp: number) => {
+    // simple XP formula matching seed stats
+    return Math.floor(Math.sqrt(totalXp / 25)) + 1;
+  };
+
   return (
-    <main className="space-y-6">
-      {/* HEADER SECTION */}
+    <div className="space-y-6">
+      {/* HEADER SUMMARY BAR */}
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-accent2 via-accent to-purple-400 bg-clip-text text-transparent">
             Questline
           </h1>
-          <p className="text-sm text-muted mt-1 font-medium">{headline}</p>
+          {mapData && (
+            <p className="text-sm text-muted mt-1 font-medium">
+              {mapData.user.displayName || "Demo Learner"} — Level {calculateLevel(mapData.user.totalXp)}
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-3">
-          <StreakBadge current={user.currentStreak} longest={user.longestStreak} freezes={user.freezesAvailable} />
-        </div>
+        {mapData && (
+          <div className="flex items-center gap-3">
+            <StreakBadge
+              current={mapData.user.streakDays}
+              longest={mapData.user.streakDays + 3}
+              freezes={2}
+            />
+          </div>
+        )}
       </header>
 
       {/* XP BAR CARD */}
-      <section className="card">
-        <XpBar totalXp={user.totalXp} level={user.level} />
-      </section>
+      {mapData && (
+        <section className="card">
+          <XpBar totalXp={mapData.user.totalXp} level={calculateLevel(mapData.user.totalXp)} />
+        </section>
+      )}
 
       {/* NAVIGATION TABS */}
       <nav className="flex flex-wrap gap-2 border-b border-white/5 pb-2">
@@ -473,7 +481,7 @@ export default function HomeClient({
           onClick={() => setActiveTab("learn")}
           className={activeTab === "learn" ? "btn-tab-active" : "btn-tab-inactive"}
         >
-          🎮 Learn
+          🎮 Learn Map
         </button>
         <button
           onClick={() => setActiveTab("quests")}
@@ -495,68 +503,196 @@ export default function HomeClient({
         </button>
       </nav>
 
-      {/* TAB CONTENT SECTIONS */}
+      {/* LEARN TAB */}
       {activeTab === "learn" && (
-        <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* PROBLEM SIDE */}
-          <div className="lg:col-span-2 space-y-4">
-            {problem ? (
-              <ProblemCard
-                problem={problem}
-                targetMastery={targetMastery}
-                userMastery={userMastery}
-                onSubmit={onSubmit}
-                submitting={submitting}
-              />
-            ) : (
-              <div className="card flex flex-col items-center justify-center py-16 text-center space-y-4">
-                <div className="h-10 w-10 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
-                <div>
-                  <p className="text-base font-semibold text-text">Serving up a fresh challenge…</p>
-                  <p className="text-xs text-muted mt-1 max-w-xs mx-auto">
-                    Selecting a topic and difficulty matching your current mastery.
-                  </p>
-                </div>
-                <button className="btn-secondary mt-2" onClick={() => void loadProblem()}>
-                  ⚡ Skip / Next
+        <section className="space-y-6">
+          {loadingMap ? (
+            <div className="py-24 text-center text-muted flex flex-col items-center justify-center space-y-3">
+              <div className="h-10 w-10 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
+              <span>Loading your learning ladder…</span>
+            </div>
+          ) : view === "play" && levelInfo && problem ? (
+            /* PLAY MODE */
+            <div className="card max-w-2xl mx-auto space-y-6">
+              <div className="flex items-center justify-between">
+                <button onClick={backToMap} className="btn-secondary py-1.5 px-3 text-xs">
+                  ← Back to map
                 </button>
+                <span className="text-xs text-muted">Stage {levelInfo.stage}</span>
               </div>
-            )}
-            {feedback && <FeedbackToast feedback={feedback} onDismiss={() => setFeedback(null)} />}
-          </div>
 
-          {/* RIGHT SIDEBAR */}
-          <aside className="space-y-4">
-            {/* SUBJECT SELECTOR */}
-            <div className="card p-4">
-              <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">ACTIVE SUBJECT</h2>
-              <div className="grid grid-cols-2 gap-2 mt-3 bg-black/45 p-1 rounded-xl border border-white/5">
-                <button
-                  onClick={() => setActiveSubject("math")}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                    activeSubject === "math" ? "bg-accent text-white shadow-sm" : "text-muted hover:text-text"
-                  }`}
-                >
-                  📐 Mathematics
-                </button>
-                <button
-                  onClick={() => setActiveSubject("computer_science")}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                    activeSubject === "computer_science" ? "bg-accent2 text-black shadow-sm" : "text-muted hover:text-text"
-                  }`}
-                >
-                  💻 Comp Sci
-                </button>
+              {/* Title Header */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`chip bg-gradient-to-r ${WORLD_COLOR[levelInfo.world]} text-white font-extrabold uppercase border-none`}>
+                  {levelInfo.world}
+                </span>
+                <h2 className="text-xl font-bold text-text">
+                  {levelInfo.skillNames.join(" + ")}
+                </h2>
+              </div>
+
+              {/* Progress Bar (Practice Mode only) */}
+              {stats && !levelInfo.isBoss && (
+                <div className="space-y-1 bg-black/35 p-3.5 rounded-2xl border border-white/5">
+                  <div className="flex justify-between text-xs font-semibold text-muted">
+                    <span>Stage Progress</span>
+                    <span>
+                      {stats.progress}% · Accuracy {Math.round(stats.accuracy * 100)}%
+                    </span>
+                  </div>
+                  <div className="h-2.5 w-full bg-black/40 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-accent to-accent2 rounded-full transition-all duration-300"
+                      style={{ width: `${stats.progress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Boss Mode indicators */}
+              {levelInfo.isBoss && bossState && (
+                <div className="flex justify-between gap-4 p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-xs font-bold text-rose-300">
+                  <span>👿 BOSS GATE BATTLE</span>
+                  <span>❤️ Hearts: {bossState.hearts} · HP: {bossState.hp}</span>
+                </div>
+              )}
+
+              {/* Problem Prompt Display */}
+              <div className="py-10 text-center">
+                <p className="text-3xl font-extrabold tracking-wide text-text bg-gradient-to-r from-white via-text to-white/70 bg-clip-text text-transparent">
+                  {problem.prompt}
+                </p>
+              </div>
+
+              {/* Answer Inputs */}
+              {problem.inputType === "multiple-choice" && problem.choices ? (
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  {problem.choices.map((c) => (
+                    <button
+                      key={c.id}
+                      disabled={submitting || (!!feedback && feedback.state !== "hint")}
+                      onClick={() => {
+                        setInputAnswer(c.id);
+                        void handleAnswerSubmit();
+                      }}
+                      className="btn-secondary py-3.5 justify-start text-left font-bold"
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <form onSubmit={handleAnswerSubmit} className="flex gap-2">
+                  <input
+                    value={inputAnswer}
+                    onChange={(e) => setInputAnswer(e.target.value)}
+                    placeholder={problem.inputType === "fraction" ? "e.g. 5/6" : "Your answer"}
+                    disabled={submitting || (!!feedback && feedback.state !== "hint")}
+                    className="flex-1 rounded-xl border border-white/10 bg-black/45 px-4 py-2.5 text-base outline-none focus:border-accent font-medium"
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    disabled={submitting || !inputAnswer}
+                    className="btn-primary px-6"
+                  >
+                    {submitting ? "Checking…" : "Submit"}
+                  </button>
+                </form>
+              )}
+
+              {/* Hints Remaining */}
+              {!feedback && (
+                <p className="text-xs text-muted mt-1">
+                  💡 {attemptsRemaining} hint{attemptsRemaining === 1 ? "" : "s"} before the worked solution.
+                </p>
+              )}
+
+              {/* Feedback responses */}
+              {feedback && (
+                <div className="space-y-4">
+                  {feedback.state === "hint" && (
+                    <div className="p-4 rounded-xl border border-amber-500/25 bg-amber-500/10 text-sm text-amber-200">
+                      💡 <b>Hint:</b> {feedback.hint}
+                    </div>
+                  )}
+
+                  {feedback.state === "solved" && (
+                    <div className="p-4 rounded-xl border border-good/25 bg-good/10 text-sm text-good">
+                      <div className="font-extrabold text-base">✅ Correct! {xpGained && `+${xpGained} XP`}</div>
+                      {progressDelta && progressDelta !== 0 && (
+                        <div className="text-xs text-muted mt-1">
+                          Progress {progressDelta > 0 ? "+" : ""}{progressDelta}%
+                        </div>
+                      )}
+                      <button onClick={handleNextProblem} className="btn-primary mt-3 text-xs">
+                        Next Problem →
+                      </button>
+                    </div>
+                  )}
+
+                  {feedback.state === "revealed" && (
+                    <div className="p-4 rounded-xl border border-bad/25 bg-bad/10 text-sm text-rose-300">
+                      <div className="font-bold">Out of hints! Worked Solution:</div>
+                      <div className="font-semibold text-text mt-2 bg-black/35 p-3 rounded-lg border border-white/5">
+                        {feedback.solution}
+                      </div>
+                      <button onClick={handleNextProblem} className="btn-primary mt-3 text-xs">
+                        Next Problem →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* MAP MODE */
+            <div className="space-y-4">
+              <div className="card">
+                <h3 className="text-lg font-bold text-text">Practice Ladder</h3>
+                <p className="text-xs text-muted">
+                  Tap your current green 🟢 level node or any cleared 🟡 level nodes to practice. Scroll horizontally.
+                </p>
+                <div className="mt-4 overflow-x-auto overflow-y-hidden rounded-2xl border border-white/5 bg-gradient-to-r from-accent/5 to-accent2/5 p-4">
+                  <div className="flex items-center gap-4 h-48 py-2 min-w-max">
+                    {mapData?.levels.map((l, idx) => {
+                      const theme = NODE_THEME[l.status] || NODE_THEME.locked;
+                      const offsetTop = 40 + Math.sin(idx * 0.55) * 32;
+                      const clickable = l.status !== "locked";
+
+                      return (
+                        <div key={l.stage} className="relative w-16 h-36 flex-shrink-0">
+                          <button
+                            onClick={() => clickable && void openLevel(l.stage)}
+                            disabled={!clickable}
+                            style={{ top: `${offsetTop}px` }}
+                            className={`absolute left-2 h-12 w-12 rounded-full border-2 flex items-center justify-center text-xs font-extrabold transition-all duration-200 active:scale-90 ${
+                              clickable ? "cursor-pointer" : "cursor-default opacity-50"
+                            } ${theme.bg}`}
+                            title={`Stage ${l.stage}: ${l.skillNames.join(" + ")}`}
+                          >
+                            {l.status === "locked" ? "🔒" : l.stage}
+                          </button>
+                          {l.status === "cleared" && (
+                            <div
+                              style={{ top: `${offsetTop + 52}px` }}
+                              className="absolute left-0 w-16 text-center text-[9px] text-yellow-400 font-bold"
+                            >
+                              {"★".repeat(l.stars)}{"☆".repeat(3 - l.stars)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
-
-            <TopicMap topics={filteredTopics} topicNames={topicNames} topicSlugs={topicSlugs} />
-            <BadgeCase badges={badges} />
-            <RecentFeed rows={recent} />
-          </aside>
+          )}
         </section>
       )}
 
+      {/* QUESTS TAB */}
       {activeTab === "quests" && (
         <section className="space-y-4">
           <div className="card">
@@ -628,6 +764,7 @@ export default function HomeClient({
         </section>
       )}
 
+      {/* LEADERBOARD TAB */}
       {activeTab === "leaderboard" && (
         <section className="space-y-4">
           <div className="card">
@@ -652,9 +789,8 @@ export default function HomeClient({
                   </thead>
                   <tbody className="divide-y divide-white/5 text-sm">
                     {leaderboard.map((item, index) => {
-                      const isSelf = item.id === user.id;
+                      const isSelf = mapData?.user && item.id === mapData.user.id;
                       const rank = index + 1;
-                      const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `${rank}`;
 
                       return (
                         <tr
@@ -665,7 +801,7 @@ export default function HomeClient({
                               : "hover:bg-white/5"
                           }`}
                         >
-                          <td className="p-4 text-center font-bold text-base">{medal}</td>
+                          <td className="p-4 text-center font-bold text-base">{renderRankMedal(rank)}</td>
                           <td className="p-4">
                             <div className="flex items-center gap-2">
                               <span className="text-text">{item.displayName}</span>
@@ -693,22 +829,23 @@ export default function HomeClient({
         </section>
       )}
 
+      {/* CLASSROOM TAB */}
       {activeTab === "classroom" && (
         <section className="space-y-6">
-          {/* TOP CONTROLS: Switch role and Join/Create forms */}
+          {/* Controls Panel */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="card md:col-span-2 flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-start">
-                  <h2 className="text-xl font-bold tracking-tight text-text">Classroom Dashboard</h2>
-                  <button onClick={() => void handleToggleRole()} className="btn-secondary py-1.5 px-3 text-xs font-bold">
-                    🔄 Switch to {user.role === "student" ? "Teacher" : "Student"} View
+                  <h2 className="text-xl font-bold tracking-tight text-text">Classroom Hub</h2>
+                  <button onClick={handleToggleRole} className="btn-secondary py-1.5 px-3 text-xs font-bold">
+                    🔄 Switch to {localRole === "student" ? "Teacher" : "Student"} View
                   </button>
                 </div>
-                <p className="text-sm text-muted mt-1 leading-normal">
-                  {user.role === "student"
-                    ? "Join a class to share your learning progress, XP, and badges with your teacher."
-                    : "Create classrooms, invite students, and analyze their mastery heatmaps to see where they excel or struggle."}
+                <p className="text-sm text-muted mt-2 leading-normal">
+                  {localRole === "student"
+                    ? "Link with your classmates! Enter a teacher's classroom code to join."
+                    : "Create classrooms and monitor student progress bars to view classroom Heatmaps."}
                 </p>
               </div>
 
@@ -724,10 +861,10 @@ export default function HomeClient({
             </div>
 
             <div className="card">
-              {user.role === "student" ? (
+              {localRole === "student" ? (
                 <form onSubmit={handleJoinClassroom} className="space-y-3">
                   <h3 className="font-bold text-sm text-text">Join a Classroom</h3>
-                  <p className="text-xs text-muted">Enter the 6-character code provided by your teacher.</p>
+                  <p className="text-xs text-muted">Enter the 6-character code (e.g. CAMP26).</p>
                   <input
                     value={joinCodeInput}
                     onChange={(e) => setJoinCodeInput(e.target.value)}
@@ -740,12 +877,12 @@ export default function HomeClient({
                 </form>
               ) : (
                 <form onSubmit={handleCreateClassroom} className="space-y-3">
-                  <h3 className="font-bold text-sm text-text">Create New Classroom</h3>
-                  <p className="text-xs text-muted">Establish a class group and generate a student invitation code.</p>
+                  <h3 className="font-bold text-sm text-text">Create Classroom</h3>
+                  <p className="text-xs text-muted">Generate a code to invite students.</p>
                   <input
                     value={newClassNameInput}
                     onChange={(e) => setNewClassNameInput(e.target.value)}
-                    placeholder="e.g. Intro to Algebra"
+                    placeholder="e.g. Ms. Jane's Algebra"
                     className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-accent"
                   />
                   <button type="submit" className="w-full btn-primary py-2 text-xs">
@@ -756,17 +893,14 @@ export default function HomeClient({
             </div>
           </div>
 
-          {/* MAIN CLASSROOM LIST & DETAILS SCREEN */}
+          {/* Classroom list & stats reports */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            {/* CLASSES LIST */}
             <div className="lg:col-span-1 card p-4 space-y-3">
               <h3 className="text-xs font-bold tracking-wider text-muted uppercase">YOUR CLASSROOMS</h3>
               {loadingClassrooms ? (
-                <div className="py-6 text-center text-xs text-muted">Loading classes…</div>
+                <div className="py-6 text-center text-xs text-muted">Loading classrooms…</div>
               ) : classrooms.length === 0 ? (
-                <div className="py-6 text-center text-xs text-muted">
-                  {user.role === "student" ? "You haven't joined any classes." : "You haven't created any classes."}
-                </div>
+                <div className="py-6 text-center text-xs text-muted">No classrooms found.</div>
               ) : (
                 <ul className="space-y-2">
                   {classrooms.map((c) => (
@@ -775,14 +909,13 @@ export default function HomeClient({
                         onClick={() => void viewClassroomDetails(c.id)}
                         className={`w-full text-left p-3 rounded-xl border transition-all text-sm font-medium ${
                           selectedClassroom?.classroom.id === c.id
-                            ? "bg-accent/15 border-accent/40 text-accent font-semibold shadow-sm shadow-accent/5"
+                            ? "bg-accent/15 border-accent/40 text-accent font-semibold shadow-sm"
                             : "bg-white/5 border-white/5 hover:bg-white/10"
                         }`}
                       >
                         <p className="truncate text-text font-bold">{c.name}</p>
                         <div className="flex items-center justify-between text-[11px] text-muted mt-1.5">
                           <span>Code: {c.code}</span>
-                          {user.role === "student" && <span>Tchr: {c.teacherName}</span>}
                         </div>
                       </button>
                     </li>
@@ -791,30 +924,28 @@ export default function HomeClient({
               )}
             </div>
 
-            {/* DETAILS CONTAINER */}
             <div className="lg:col-span-3 card">
               {loadingClassroomDetails ? (
                 <div className="py-24 text-center text-muted flex flex-col items-center justify-center space-y-3">
                   <div className="h-8 w-8 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
-                  <span className="text-sm">Fetching student reports & heatmap…</span>
+                  <span>Fetching reports & heatmap…</span>
                 </div>
               ) : selectedClassroom ? (
                 <div className="space-y-6">
-                  {/* Class Meta Header */}
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-white/5 pb-4 gap-3">
                     <div>
                       <h3 className="text-xl font-black text-text">{selectedClassroom.classroom.name}</h3>
                       <p className="text-xs text-muted mt-1">
-                        Teacher: {selectedClassroom.classroom.teacherName} • Code:{" "}
+                        Teacher: {selectedClassroom.classroom.teacherName} · Code:{" "}
                         <span className="font-bold text-accent">{selectedClassroom.classroom.code}</span>
                       </p>
                     </div>
-                    <span className="chip self-start sm:self-center font-bold px-3 py-1 bg-white/5 text-text">
+                    <span className="chip px-3 py-1 bg-white/5 text-text">
                       👥 {selectedClassroom.students.length} Student{selectedClassroom.students.length === 1 ? "" : "s"}
                     </span>
                   </div>
 
-                  {/* Student Leaderboard/List for Class */}
+                  {/* Student rankings for classroom */}
                   <div className="space-y-2">
                     <h4 className="text-sm font-extrabold text-muted">Classmates Rank</h4>
                     <div className="overflow-hidden rounded-xl border border-white/5 bg-black/15 text-xs">
@@ -850,22 +981,22 @@ export default function HomeClient({
                     </div>
                   </div>
 
-                  {/* Classroom Heatmap Grid (Teacher Dashboard Extraordinaire) */}
+                  {/* Level Progress Heatmap for Classroom (showing stages 1 to 5) */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-extrabold text-muted">Mastery Skill Heatmap</h4>
+                      <h4 className="text-sm font-extrabold text-muted">Ladder Stages Progress Heatmap</h4>
                       <div className="flex gap-2 text-[10px] font-bold">
                         <span className="flex items-center gap-1">
-                          <span className="h-2 w-2 rounded-sm bg-red-500/20 border border-red-500/20"></span> &lt;900
+                          <span className="h-2 w-2 rounded-sm bg-white/5 border border-white/5"></span> locked
                         </span>
                         <span className="flex items-center gap-1">
-                          <span className="h-2 w-2 rounded-sm bg-yellow-500/20 border border-yellow-500/20"></span> 900-1100
+                          <span className="h-2 w-2 rounded-sm bg-orange-500/20 border border-orange-500/20"></span> &lt;40%
                         </span>
                         <span className="flex items-center gap-1">
-                          <span className="h-2 w-2 rounded-sm bg-emerald-500/30 border border-emerald-500/30"></span> 1100-1350
+                          <span className="h-2 w-2 rounded-sm bg-yellow-500/20 border border-yellow-500/20"></span> 40-80%
                         </span>
                         <span className="flex items-center gap-1">
-                          <span className="h-2 w-2 rounded-sm bg-cyan-500/40 border border-cyan-400/40"></span> 1350+
+                          <span className="h-2 w-2 rounded-sm bg-cyan-500/40 border border-cyan-400/40"></span> cleared
                         </span>
                       </div>
                     </div>
@@ -874,31 +1005,33 @@ export default function HomeClient({
                       {selectedClassroom.students.length === 0 ? (
                         <div className="py-8 text-center text-xs text-muted">No students enrolled yet.</div>
                       ) : (
-                        <div className="min-w-[700px] space-y-2 text-xs">
-                          {/* Grid Columns Header */}
-                          <div className="grid grid-cols-6 gap-2 border-b border-white/5 pb-2 font-bold text-muted text-[10px] uppercase">
+                        <div className="min-w-[600px] space-y-2 text-xs">
+                          {/* Column Headers */}
+                          <div className="grid grid-cols-7 gap-2 border-b border-white/5 pb-2 font-bold text-muted text-[10px] uppercase">
                             <span className="col-span-2">Student</span>
-                            <span className="text-center truncate">{selectedClassroom.topics[0]?.name || "L1"}</span>
-                            <span className="text-center truncate">{selectedClassroom.topics[1]?.name || "L2"}</span>
-                            <span className="text-center truncate">{selectedClassroom.topics[2]?.name || "L3"}</span>
-                            <span className="text-center truncate">{selectedClassroom.topics[3]?.name || "L4"}</span>
+                            <span className="text-center">Stage 1</span>
+                            <span className="text-center">Stage 2</span>
+                            <span className="text-center">Stage 3</span>
+                            <span className="text-center">Stage 4</span>
+                            <span className="text-center">Stage 5</span>
                           </div>
 
-                          {/* Student Rows */}
+                          {/* Rows */}
                           {selectedClassroom.students.map((student) => (
-                            <div key={student.id} className="grid grid-cols-6 gap-2 items-center hover:bg-white/5 p-1 rounded-lg transition-colors">
+                            <div key={student.id} className="grid grid-cols-7 gap-2 items-center hover:bg-white/5 p-1 rounded-lg transition-colors">
                               <span className="col-span-2 font-bold text-text truncate">{student.displayName}</span>
-                              {selectedClassroom.topics.slice(0, 4).map((topic) => {
-                                const rating = student.mastery[topic.id] ?? topic.baseRating;
+                              {[1, 2, 3, 4, 5].map((stage) => {
+                                // Default progress is 0 if no progress seeded
+                                const progress = student.mastery[String(stage)] ?? 0;
                                 return (
                                   <div
-                                    key={topic.id}
-                                    className={`heatmap-cell flex items-center justify-center p-2 font-extrabold text-[10px] text-center rounded-lg ${getHeatmapColor(
-                                      rating,
+                                    key={stage}
+                                    className={`heatmap-cell flex items-center justify-center p-2 font-extrabold text-[10px] text-center rounded-lg ${getProgressColor(
+                                      progress,
                                     )}`}
-                                    title={`${topic.name}: ${rating}`}
+                                    title={`Stage ${stage}: ${progress}% progress`}
                                   >
-                                    {rating}
+                                    {progress === 100 ? "Cleared" : `${progress}%`}
                                   </div>
                                 );
                               })}
@@ -912,10 +1045,9 @@ export default function HomeClient({
               ) : (
                 <div className="py-24 text-center text-muted flex flex-col items-center justify-center space-y-2">
                   <div className="text-4xl">📚</div>
-                  <h4 className="font-bold text-base text-text">Classroom Report View</h4>
+                  <h4 className="font-bold text-base text-text">Reports View</h4>
                   <p className="text-xs text-muted max-w-xs leading-normal">
-                    Select a classroom from the left-hand sidebar to inspect enrolled student analytics, XP leaderboard,
-                    and skill mastery heatmaps.
+                    Select a classroom from the sidebar to inspect enrolled student rankings and level progress heatmaps.
                   </p>
                 </div>
               )}
@@ -923,6 +1055,6 @@ export default function HomeClient({
           </div>
         </section>
       )}
-    </main>
+    </div>
   );
 }

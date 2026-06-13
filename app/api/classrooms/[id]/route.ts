@@ -28,7 +28,6 @@ export async function GET(
               displayName: true,
               username: true,
               totalXp: true,
-              level: true,
               currentStreak: true,
               lastActiveDay: true,
             },
@@ -50,34 +49,39 @@ export async function GET(
     return NextResponse.json({ error: "unauthorized" }, { status: 403 });
   }
 
-  // Pull all topics for mapping
-  const topics = await prisma.topic.findMany({
-    orderBy: [{ order: "asc" }, { name: "asc" }],
+  // Pull first 5 levels for heatmap mapping (to keep it compact and clean)
+  const levels = await prisma.level.findMany({
+    where: { stage: { lte: 5 } },
+    orderBy: { stage: "asc" },
   });
 
-  // Pull all masteries for members of this classroom
+  // Pull level progress for members of this classroom
   const memberIds = classroom.members.map((m) => m.userId);
-  const masteries = await prisma.mastery.findMany({
+  const progressRows = await prisma.levelProgress.findMany({
     where: {
       userId: { in: memberIds },
+      stage: { lte: 5 },
     },
   });
 
-  // Organize masteries into user-to-topic rating mapping
-  const masteryMatrix: Record<string, Record<string, number>> = {};
+  // Organize progress into user-to-stage progress mapping (default is 0)
+  const progressMatrix: Record<string, Record<string, number>> = {};
   for (const m of memberIds) {
-    masteryMatrix[m] = {};
-    for (const t of topics) {
-      // default is the topic base rating
-      masteryMatrix[m][t.id] = t.baseRating;
+    progressMatrix[m] = {};
+    for (const l of levels) {
+      progressMatrix[m][String(l.stage)] = 0;
     }
   }
 
-  for (const m of masteries) {
-    if (masteryMatrix[m.userId]) {
-      masteryMatrix[m.userId][m.topicId] = m.rating;
+  for (const p of progressRows) {
+    if (progressMatrix[p.userId]) {
+      progressMatrix[p.userId][String(p.stage)] = p.progress;
     }
   }
+
+  const calculateLevel = (totalXp: number) => {
+    return Math.floor(Math.sqrt(totalXp / 25)) + 1;
+  };
 
   return NextResponse.json({
     classroom: {
@@ -92,17 +96,17 @@ export async function GET(
       displayName: m.user.displayName,
       username: m.user.username,
       totalXp: m.user.totalXp,
-      level: m.user.level,
+      level: calculateLevel(m.user.totalXp),
       currentStreak: m.user.currentStreak,
       joinedAt: m.joinedAt,
-      mastery: masteryMatrix[m.user.id],
+      mastery: progressMatrix[m.user.id],
     })),
-    topics: topics.map((t) => ({
-      id: t.id,
-      name: t.name,
-      slug: t.slug,
-      subject: t.subject,
-      baseRating: t.baseRating,
+    topics: levels.map((l) => ({
+      id: String(l.stage),
+      name: `Stage ${l.stage}`,
+      slug: l.world,
+      subject: l.world,
+      baseRating: 0,
     })),
   });
 }

@@ -20,7 +20,6 @@ export async function GET() {
       username: true,
       displayName: true,
       totalXp: true,
-      level: true,
       currentStreak: true,
     },
   });
