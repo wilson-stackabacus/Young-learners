@@ -1,8 +1,8 @@
 # Questline 🎯
 
-A gamified, adaptive learning platform — in the spirit of [AoPS Alcumus](https://artofproblemsolving.com/alcumus). Learners work through problems that adjust in difficulty to their performance, earning XP, levels, streaks, and badges as they master topics.
+A gamified, level-based learning platform — in the spirit of [AoPS Alcumus](https://artofproblemsolving.com/alcumus). Learners climb a ladder of skill levels (from basic arithmetic up to Algebra 1), advancing as they demonstrate mastery. A wrong answer never just says "incorrect" — it gives a hint about what likely went wrong.
 
-> **Status:** Environment scaffold only. This repository currently contains the project setup (git, README, `.gitignore`). The application itself has not been built yet — see the [Roadmap](#roadmap) for what comes next.
+> **Status:** Environment scaffold + design spec. This repository contains the project setup (git, README, `.gitignore`) and the design documents — **not** application code yet. See [`docs/DESIGN.md`](docs/DESIGN.md) for how it works, [`docs/CURRICULUM.md`](docs/CURRICULUM.md) for the level ladder, and the [Roadmap](#roadmap) for what comes next.
 
 ---
 
@@ -10,21 +10,21 @@ A gamified, adaptive learning platform — in the spirit of [AoPS Alcumus](https
 
 Alcumus works because it does three things well:
 
-1. **Adapts** — it tracks mastery per topic and serves problems that are neither too easy nor too hard.
-2. **Rewards** — progress is visible and constant (XP, ratings, topic completion bars).
-3. **Focuses** — one problem at a time, with full solutions and immediate feedback.
+1. **Gates on mastery** — you move forward by proving you can do the current skill, not by clicking "next."
+2. **Rewards** — progress is visible and constant (a filling progress bar, XP, streaks, badges).
+3. **Focuses** — one problem at a time, with hints and full solutions on demand.
 
-Questline aims to reproduce that loop for any subject, not just math.
+Questline reproduces that loop as a **linear level ladder**: each level drills one skill, problems are generated on the fly, and you advance when a progress bar fills.
 
 ---
 
 ## Core Features (planned)
 
 ### Learning engine
-- **Adaptive difficulty** — per-topic mastery scores drive problem selection (e.g. an Elo-style rating per user × topic).
-- **Topic tree / skill map** — prerequisites unlock as foundations are mastered.
-- **Problem types** — multiple choice, numeric entry, short answer, with hints and step-by-step solutions.
-- **Immediate feedback** — correct/incorrect, full solution, and "explain why."
+- **Level ladder** — a linear sequence of skills, from `Addition` to `Quadratics (rational roots)`. See [`docs/CURRICULUM.md`](docs/CURRICULUM.md).
+- **Procedural generators** — each level generates fresh problems on the fly (no static question bank), so the answer is always known and practice never runs out.
+- **Progress-bar advancement** — a 0–100 bar per level, driven mostly by rolling accuracy but always nudged up by volume. Fill it to advance. See [`docs/DESIGN.md`](docs/DESIGN.md).
+- **Diagnostic feedback** — a wrong answer triggers Hint 1 → retry → Hint 2 → retry → full worked solution, with hints targeted to the specific mistake when recognized.
 
 ### Gamification
 - **XP & levels** — earn experience for solving; level up to unlock content/cosmetics.
@@ -91,12 +91,13 @@ questline/
 │   ├── (auth)/           # Login, signup
 │   ├── (learn)/          # Problem-solving UI, dashboards
 │   └── api/              # Route handlers
-├── components/           # Reusable UI (problem card, XP bar, badge)
-├── lib/                  # Adaptive engine, scoring, gamification logic
-│   ├── adaptive/         # Difficulty selection, mastery model
+├── components/           # Reusable UI (problem card, progress bar, badge)
+├── lib/                  # Core logic
+│   ├── levels/           # One generator per level + its common mistakes
+│   ├── progression/      # Progress-bar engine, advancement rules
 │   └── gamification/     # XP, streaks, badges, quests
 ├── prisma/               # schema.prisma, migrations, seed data
-├── content/              # Problem banks, topic tree definitions
+├── docs/                 # DESIGN.md, CURRICULUM.md
 ├── public/               # Static assets
 └── tests/                # Unit + e2e
 ```
@@ -105,29 +106,29 @@ questline/
 
 ## Data Model (sketch)
 
-The minimum entities to make the adaptive loop work:
+The minimum entities to make the level loop work (full version in [`docs/DESIGN.md`](docs/DESIGN.md)):
 
-- **User** — profile, level, total XP, current streak.
-- **Topic** — name, prerequisites, position in the skill tree.
-- **Problem** — topic, difficulty rating, statement, choices/answer, solution, hints.
-- **Attempt** — user × problem, correct?, time taken, timestamp.
-- **Mastery** — user × topic rating (updated after each attempt).
+- **User** — profile, current level, total XP, current streak.
+- **Level** — id, order, name, tier. (The problem *generator* is code, keyed by id.)
+- **LevelProgress** — user × level, progress (0–100), rolling window of the last 10 results, totals.
+- **Attempt** — user × level, prompt, given answer, correct?, hints used, solved-after-hint, timestamp.
 - **Badge / Achievement** — definition + user unlocks.
 
 ---
 
 ## Roadmap
 
+- [x] Define the system design and level ladder ([`docs/`](docs/))
 - [ ] Choose and scaffold the application stack
 - [ ] Define the data model and run first migration
-- [ ] Build the single-problem solving loop (serve → answer → feedback)
-- [ ] Implement the adaptive difficulty engine
+- [ ] Write the first few level generators (arithmetic) + their common mistakes
+- [ ] Build the single-problem loop (generate → answer → hint → solution)
+- [ ] Implement the progress-bar advancement engine
 - [ ] Add XP, levels, and streaks
 - [ ] Add badges, achievements, and quests
-- [ ] Build learner dashboard (mastery heatmap)
-- [ ] Add classrooms / teacher views
-- [ ] Add leaderboards
-- [ ] Author an initial problem bank for one subject
+- [ ] Build the learner dashboard
+- [ ] Extend generators up through Algebra 1
+- [ ] Add classrooms / teacher views and leaderboards
 
 ---
 
