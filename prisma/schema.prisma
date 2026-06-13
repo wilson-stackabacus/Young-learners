@@ -1,5 +1,5 @@
-// Prisma schema for Questline
-// See README for the entity overview.
+// Prisma schema for Questline — level-ladder model.
+// See docs/DESIGN.md, docs/API.md, and shared/contract.ts for the full spec.
 
 generator client {
   provider = "prisma-client-js"
@@ -16,109 +16,110 @@ model User {
   displayName String
   createdAt   DateTime @default(now())
 
-  totalXp      Int    @default(0)
-  level        Int    @default(1)
+  totalXp      Int     @default(0)
+  // Position on the 225-stage ladder (the highest stage unlocked/reached).
+  currentStage Int     @default(1)
+
   // Streak: consecutive days with at least one attempt.
-  currentStreak    Int    @default(0)
-  longestStreak    Int    @default(0)
-  lastActiveDay    String? // ISO date (YYYY-MM-DD) of last qualifying activity, in user's timezone
-  freezesAvailable Int    @default(2) // streak freezes, refilled weekly (out of scope to refil for now)
+  currentStreak    Int     @default(0)
+  longestStreak    Int     @default(0)
+  lastActiveDay    String? // ISO date (YYYY-MM-DD) of last qualifying activity
+  freezesAvailable Int     @default(2)
 
-  attempts     Attempt[]
-  masteries    Mastery[]
-  badges       UserBadge[]
+  attempts Attempt[]
+  progress LevelProgress[]
+  pending  PendingProblem[]
+  badges   UserBadge[]
 }
 
-model Topic {
-  id           String   @id @default(cuid())
-  slug         String   @unique
-  name         String
-  // Elo-style starting rating for this topic — a fresh user's mastery begins near here.
-  baseRating   Int      @default(1000)
-  order        Int      @default(0)
+// Static definition of one of the 225 stages. Seeded from lib/levelCatalog.
+model Level {
+  stage       Int     @id // 1..247 — global level id
+  tier        Int // 1..45 — difficulty step
+  stageInTier Int // 1..5 for practice, 0 for a boss
+  kind        String // "pure" | "blend" | "boss"
+  skills      String // JSON array of skill ids, e.g. "[4,5]"
+  world       String // "arithmetic" | "integers" | "pre-algebra" | "algebra-1"
+  difficulty  Float // 4 for pure Lv4, 4.5 for the Lv4½ blend
+  isBoss      Boolean @default(false)
+  testsLevel  Int? // boss only: the whole-level number it gates
 
-  // Self-referential many-to-many for prerequisites. A topic is "unlocked" once every
-  // prerequisite has reached `unlockRating` (default 1100).
-  prerequisites Topic[]  @relation("TopicPrereqs")
-  unlocks       Topic[]  @relation("TopicPrereqs")
-
-  problems      Problem[]
-  masteries     Mastery[]
+  progress LevelProgress[]
 }
 
-model Problem {
-  id            String   @id @default(cuid())
-  topicId       String
-  topic         Topic    @relation(fields: [topicId], references: [id])
-  // ELO rating for this individual problem — moves as users attempt it.
-  rating        Int      @default(1000)
-  // 1..5 stars; used in selection so we don't always pick the same rating.
-  difficulty    Int      @default(1)
-  prompt        String
-  // Type of answer expected.
-  kind          String   @default("numeric") // "numeric" | "multiple_choice" | "short"
-  // JSON-encoded payload for choices, hints, solution, etc.
-  payload       String   @default("{}")
-  // Problem authors may tag a subject; default is "math".
-  subject       String   @default("math")
+// Per-user progress on a stage. The heart of the adaptive loop.
+model LevelProgress {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  stage  Int
+  level  Level  @relation(fields: [stage], references: [stage])
 
-  attempts      Attempt[]
+  status         String    @default("locked") // "locked" | "current" | "cleared"
+  progress       Int       @default(0) // 0..100 progress bar (practice stages)
+  stars          Int       @default(0) // 0..3
+  totalCorrect   Int       @default(0)
+  totalAttempts  Int       @default(0)
+  recentResults  String    @default("[]") // JSON: rolling window of last 10 booleans
+  clearedAt      DateTime?
+  bossHp         Int? // boss only: HP remaining
+  hearts         Int? // boss only: hearts remaining
 
-  @@index([topicId])
-  @@index([rating])
-}
-
-model Attempt {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id])
-  problemId  String
-  problem    Problem  @relation(fields: [problemId], references: [id])
-  correct    Boolean
-  // Time spent in milliseconds.
-  timeMs     Int
-  // Whether the user used a hint.
-  usedHint   Boolean  @default(false)
-  // XP awarded for this attempt (post-multipliers).
-  xpAwarded  Int      @default(0)
-  // Pre-update mastery rating, stored for transparency.
-  ratingBefore Int
-  ratingAfter  Int
-  createdAt  DateTime @default(now())
-
-  @@index([userId, createdAt])
-  @@index([problemId])
-}
-
-// Per-user per-topic mastery rating. Created lazily on first attempt in a topic.
-model Mastery {
-  id        String  @id @default(cuid())
-  userId    String
-  user      User    @relation(fields: [userId], references: [id])
-  topicId   String
-  topic     Topic   @relation(fields: [topicId], references: [id])
-  rating    Int     @default(1000)
-  // Number of problems solved in this topic.
-  solved    Int     @default(0)
-  // Total attempts in this topic (correct + incorrect).
-  attempts  Int     @default(0)
-  updatedAt DateTime @updatedAt
-
-  @@unique([userId, topicId])
+  @@unique([userId, stage])
   @@index([userId])
 }
 
+// A generated, in-flight problem. Holds the answer server-side (never sent to
+// the client) so submissions can be checked. One per active problem; deleted
+// when the problem resolves.
+model PendingProblem {
+  token          String   @id
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  stage          Int
+  prompt         String
+  latex          String
+  inputType      String // "numeric" | "fraction" | "multiple-choice"
+  choices        String? // JSON, only for multiple-choice
+  answer         String // the secret canonical answer
+  hints          String // JSON array of strings
+  solution       String
+  commonMistakes String   @default("[]") // JSON: [{ value, hint }]
+  attemptsUsed   Int      @default(0)
+  isBoss         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+// One row per submitted answer. Drives accuracy + analytics.
+model Attempt {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  stage           Int
+  prompt          String
+  givenAnswer     String?
+  correct         Boolean
+  hintsUsed       Int      @default(0)
+  solvedAfterHint Boolean  @default(false)
+  isBoss          Boolean  @default(false)
+  xpAwarded       Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, stage])
+}
+
 model Badge {
-  id          String  @id @default(cuid())
-  slug        String  @unique
+  id          String @id @default(cuid())
+  slug        String @unique
   name        String
   description String
-  // JSON-encoded rule definition; evaluated by the badge engine.
-  rule        String
-  // Visual tier (bronze / silver / gold / platinum).
-  tier        String  @default("bronze")
+  rule        String // JSON-encoded rule, evaluated by the badge engine
+  tier        String @default("bronze")
 
-  unlocks     UserBadge[]
+  unlocks UserBadge[]
 }
 
 model UserBadge {

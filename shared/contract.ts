@@ -23,18 +23,30 @@ export interface WorldMeta {
   stageRange: [number, number];
 }
 
-export type LevelKind = 'pure' | 'blend';
+export type LevelKind = 'pure' | 'blend' | 'boss';
 
-/** Static definition of one of the 225 stages. */
+/** Static definition of one of the 247 stages (225 practice + 22 bosses). */
 export interface LevelInfo {
-  stage: number;          // 1..225  — global level id
+  stage: number;          // 1..247  — global level id
   tier: number;           // 1..45   — difficulty step
-  stageInTier: number;    // 1..5
-  kind: LevelKind;        // 'pure' = one skill, 'blend' = two adjacent skills
-  skills: number[];       // [4] for pure, [4, 5] for a blend  (skill ids 1..23)
+  stageInTier: number;    // 1..5 for practice, 0 for a boss
+  kind: LevelKind;        // 'pure' = one skill, 'blend' = two skills, 'boss' = gate
+  skills: number[];       // [4] for pure, [4, 5] for a blend/boss  (skill ids 1..23)
   skillNames: string[];   // human labels, aligned index-for-index with `skills`
   world: WorldId;
   difficulty: number;     // 4 for pure Lv4, 4.5 for the Lv4½ blend
+  isBoss?: boolean;       // true for boss stages
+  testsLevel?: number;    // boss only: the whole-level number it gates
+}
+
+/** Live state of a boss battle (present on boss stages). */
+export interface BossState {
+  hp: number;             // boss HP remaining
+  maxHp: number;
+  hearts: number;         // player hearts remaining
+  maxHearts: number;
+  defeated: boolean;      // boss beaten this answer → stage cleared
+  failed: boolean;        // hearts hit 0 → battle reset
 }
 
 export type LevelStatus = 'locked' | 'current' | 'cleared';
@@ -103,6 +115,7 @@ export interface ProblemResponse {
   level: LevelInfo;
   problem: Problem;
   stats: Stats;
+  boss?: BossState; // present when the stage is a boss battle
 }
 
 /* ----------------------------------------------------------------------------
@@ -135,6 +148,8 @@ export interface AnswerResponse {
   advanced?: { toStage: number };
   /** the next problem, when state is 'solved' or 'revealed' */
   nextProblem?: Problem;
+  /** present when answering a boss stage — the battle's live state */
+  boss?: BossState;
 }
 
 /* ----------------------------------------------------------------------------
