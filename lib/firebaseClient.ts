@@ -16,8 +16,11 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  browserLocalPersistence,
+  setPersistence,
   signOut,
   onAuthStateChanged,
+  type AuthError,
   type Auth,
   type User,
 } from "firebase/auth";
@@ -30,7 +33,7 @@ const config = {
 };
 
 export function isFirebaseConfigured(): boolean {
-  return Boolean(config.apiKey && config.projectId);
+  return Boolean(config.apiKey && config.authDomain && config.projectId && config.appId);
 }
 
 let cachedAuth: Auth | null = null;
@@ -44,16 +47,30 @@ function auth(): Auth {
 
 export async function emailSignIn(email: string, password: string): Promise<void> {
   const a = auth();
+  await setPersistence(a, browserLocalPersistence);
   try {
     await signInWithEmailAndPassword(a, email, password);
-  } catch {
-    // New account → create it (simple combined sign-in / sign-up).
-    await createUserWithEmailAndPassword(a, email, password);
+  } catch (error) {
+    const code = (error as AuthError).code;
+    if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
+      try {
+        await createUserWithEmailAndPassword(a, email, password);
+      } catch (createError) {
+        if ((createError as AuthError).code === "auth/email-already-in-use") throw error;
+        throw createError;
+      }
+      return;
+    }
+    throw error;
   }
 }
 
 export async function googleSignIn(): Promise<void> {
-  await signInWithPopup(auth(), new GoogleAuthProvider());
+  const a = auth();
+  await setPersistence(a, browserLocalPersistence);
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  await signInWithPopup(a, provider);
 }
 
 export async function logout(): Promise<void> {
