@@ -1,0 +1,88 @@
+<svg viewBox="0 0 680 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Wireframe of the three screens that connect to the Questline backend: world map, play, and boss battle.">
+  <style>
+    text { font-family: 'Helvetica Neue', Arial, sans-serif; }
+    .mono { font-family: 'SF Mono', Menlo, Consolas, monospace; }
+  </style>
+
+  <rect x="6" y="6" width="668" height="548" rx="16" fill="#f5f5f6" stroke="#e2e2e6"/>
+  <text x="24" y="34" fill="#2c2c30" font-size="16" font-weight="500">Questline — UI ↔ backend wireframe</text>
+  <text x="24" y="52" fill="#76767e" font-size="11">Thin client: the UI renders API responses and sends back { token, answer }. All logic lives in the backend.</text>
+
+  <text x="20" y="74" fill="#2c2c30" font-size="12" font-weight="500">1 · World map</text>
+  <text x="239" y="74" fill="#2c2c30" font-size="12" font-weight="500">2 · Play (practice)</text>
+  <text x="458" y="74" fill="#2c2c30" font-size="12" font-weight="500">3 · Boss battle</text>
+
+  <rect x="18" y="82" width="206" height="386" rx="14" fill="#ffffff" stroke="#d4d4d9"/>
+  <rect x="237" y="82" width="206" height="386" rx="14" fill="#ffffff" stroke="#d4d4d9"/>
+  <rect x="456" y="82" width="206" height="386" rx="14" fill="#ffffff" stroke="#d4d4d9"/>
+
+  <!-- Frame 1: World map -->
+  <rect x="30" y="94" width="182" height="24" rx="6" fill="#f0f0f2"/>
+  <text x="39" y="110" fill="#76767e" font-size="11">1,070 XP · 5d streak · 12/247</text>
+  <rect x="30" y="126" width="84" height="18" rx="9" fill="#e9f3e0"/>
+  <text x="38" y="139" fill="#3b6d11" font-size="11">Arithmetic</text>
+
+  <polyline points="70,178 150,242 70,306 150,370" fill="none" stroke="#c2c2c8" stroke-width="2" stroke-dasharray="2 5"/>
+  <circle cx="70" cy="178" r="15" fill="#f5a623"/>
+  <text x="70" y="182" text-anchor="middle" fill="#ffffff" font-size="11">10</text>
+  <text x="70" y="200" text-anchor="middle" fill="#f5a623" font-size="11">★★★</text>
+  <polygon points="150,222 172,242 150,262 128,242" fill="#f7ddd8" stroke="#c0453a"/>
+  <text x="150" y="246" text-anchor="middle" fill="#c0453a" font-size="11">boss</text>
+  <circle cx="70" cy="306" r="20" fill="none" stroke="#36a636" stroke-width="2" opacity="0.45"/>
+  <circle cx="70" cy="306" r="16" fill="#36a636"/>
+  <text x="70" y="310" text-anchor="middle" fill="#ffffff" font-size="11">12</text>
+  <text x="70" y="332" text-anchor="middle" fill="#36a636" font-size="11">now</text>
+  <circle cx="150" cy="370" r="15" fill="#ececef" stroke="#c2c2c8" stroke-dasharray="3 3"/>
+  <text x="150" y="374" text-anchor="middle" fill="#9a9aa2" font-size="11">lock</text>
+
+  <text x="20" y="488" class="mono" fill="#555555" font-size="11">GET /api/map</text>
+  <text x="20" y="504" class="mono" fill="#8a8a90" font-size="11">→ user, worlds, levels[247]</text>
+
+  <!-- Frame 2: Play -->
+  <text x="249" y="110" fill="#2c2c30" font-size="12" font-weight="500">Stage 12 · Subtraction</text>
+  <rect x="399" y="98" width="34" height="17" rx="8" fill="#ececff" stroke="#c9c9f0"/>
+  <text x="416" y="110" text-anchor="middle" fill="#534ab7" font-size="11">Lv 2</text>
+  <text x="249" y="132" fill="#76767e" font-size="11">progress</text>
+  <text x="431" y="132" text-anchor="end" fill="#76767e" font-size="11">40 / 100</text>
+  <rect x="249" y="138" width="182" height="10" rx="5" fill="#ececef"/>
+  <rect x="249" y="138" width="73" height="10" rx="5" fill="#2f9be8"/>
+  <rect x="249" y="160" width="182" height="66" rx="10" fill="#fafafa" stroke="#e2e2e6"/>
+  <text x="340" y="200" text-anchor="middle" fill="#2c2c30" font-size="22">7 + 6</text>
+  <rect x="249" y="240" width="110" height="30" rx="6" fill="#ffffff" stroke="#cfcfd5"/>
+  <text x="258" y="259" fill="#9a9aa2" font-size="11">type answer…</text>
+  <rect x="367" y="240" width="64" height="30" rx="6" fill="#2f9be8"/>
+  <text x="399" y="259" text-anchor="middle" fill="#ffffff" font-size="11">Submit</text>
+  <rect x="249" y="282" width="182" height="30" rx="6" fill="#fff7e6" stroke="#f5c97a"/>
+  <text x="258" y="301" fill="#8a5a00" font-size="11">hint: multiply before adding…</text>
+  <text x="249" y="334" fill="#76767e" font-size="11">state: hint / solved / revealed</text>
+  <text x="249" y="354" fill="#9a9aa2" font-size="11">input widget ← problem.inputType</text>
+
+  <text x="237" y="488" class="mono" fill="#555555" font-size="11">GET /levels/{n}/problem</text>
+  <text x="237" y="504" class="mono" fill="#8a8a90" font-size="11">POST /answer {token,answer}</text>
+
+  <!-- Frame 3: Boss -->
+  <text x="468" y="110" fill="#c0453a" font-size="12" font-weight="500">Boss · tests Lv 1</text>
+  <text x="468" y="132" fill="#76767e" font-size="11">boss HP</text>
+  <text x="650" y="132" text-anchor="end" fill="#76767e" font-size="11">3 / 5</text>
+  <rect x="468" y="138" width="182" height="10" rx="5" fill="#ececef"/>
+  <rect x="468" y="138" width="109" height="10" rx="5" fill="#c0453a"/>
+  <text x="468" y="162" fill="#76767e" font-size="11">hearts</text>
+  <circle cx="516" cy="158" r="6" fill="#c0453a"/>
+  <circle cx="534" cy="158" r="6" fill="#c0453a"/>
+  <circle cx="552" cy="158" r="6" fill="none" stroke="#c0453a"/>
+  <text x="650" y="162" text-anchor="end" fill="#76767e" font-size="11">2 / 3</text>
+  <rect x="468" y="176" width="182" height="64" rx="10" fill="#fafafa" stroke="#e2e2e6"/>
+  <text x="559" y="214" text-anchor="middle" fill="#2c2c30" font-size="22">13 − 9</text>
+  <rect x="468" y="254" width="110" height="30" rx="6" fill="#ffffff" stroke="#cfcfd5"/>
+  <text x="477" y="273" fill="#9a9aa2" font-size="11">type answer…</text>
+  <rect x="586" y="254" width="64" height="30" rx="6" fill="#c0453a"/>
+  <text x="618" y="273" text-anchor="middle" fill="#ffffff" font-size="11">Attack</text>
+  <text x="468" y="316" fill="#76767e" font-size="11">no hints · solution on a miss</text>
+  <text x="468" y="336" fill="#9a9aa2" font-size="11">defeat → advance · fail → reset</text>
+
+  <text x="456" y="488" class="mono" fill="#555555" font-size="11">POST /levels/{n}/answer</text>
+  <text x="456" y="504" class="mono" fill="#8a8a90" font-size="11">→ boss{hp,hearts,defeated}</text>
+
+  <line x1="24" y1="524" x2="656" y2="524" stroke="#e2e2e6"/>
+  <text x="24" y="543" fill="#9a9aa2" font-size="11">Rule: the correct answer is never sent to the client — submit { token, answer } and let the backend judge. Types live in shared/contract.ts.</text>
+</svg>
