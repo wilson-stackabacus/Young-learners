@@ -2,7 +2,11 @@
 
 A gamified, level-based learning platform — in the spirit of [AoPS Alcumus](https://artofproblemsolving.com/alcumus). Learners climb a ladder of skill levels (from basic arithmetic up to Algebra 1), advancing as they demonstrate mastery. A wrong answer never just says "incorrect" — it gives a hint about what likely went wrong.
 
-> **Status:** Environment scaffold + design spec. This repository contains the project setup (git, README, `.gitignore`) and the design documents — **not** application code yet. See [`docs/DESIGN.md`](docs/DESIGN.md) for how it works, [`docs/CURRICULUM.md`](docs/CURRICULUM.md) for the level ladder, and the [Roadmap](#roadmap) for what comes next.
+> **Status:** Environment scaffold + design spec + a UI prototype. This repository contains the project setup, the design documents, the API contract, and a clickable world-map prototype — but **not** the production app yet. Start here:
+> - [`docs/DESIGN.md`](docs/DESIGN.md) — how it works (progress bar, hints, generators)
+> - [`docs/CURRICULUM.md`](docs/CURRICULUM.md) — the 225-level ladder
+> - [`docs/API.md`](docs/API.md) + [`shared/contract.ts`](shared/contract.ts) — the backend ↔ frontend data contract
+> - [`prototype/level-map.html`](prototype/level-map.html) — the Angry-Birds-style world map (open in a browser)
 
 ---
 
@@ -46,14 +50,14 @@ Nothing here is locked in — it's a sensible default for a project of this shap
 
 | Layer            | Choice                                  | Why                                            |
 |------------------|-----------------------------------------|------------------------------------------------|
-| Framework        | **Next.js (App Router) + TypeScript**   | Full-stack, SSR, API routes in one place       |
-| UI               | **React + Tailwind CSS**                | Fast iteration, consistent design system       |
+| Frontend         | **Next.js (App Router) + TypeScript**   | World-map & problem UI, hosted on Vercel       |
+| UI               | **React + Tailwind CSS** + **KaTeX**    | Fast iteration; KaTeX renders math             |
 | State / data     | **TanStack Query** + **Zustand**        | Server cache + light client state              |
-| Database         | **PostgreSQL** + **Prisma ORM**         | Relational data (users, attempts, topics)      |
+| Backend          | **Next.js API routes** (serverless)     | Generates problems, checks answers, owns logic |
+| Database         | **SQLite via libSQL / Turso** + **Prisma** | Vercel-friendly hosted SQLite; same SQL local |
 | Auth             | **Auth.js (NextAuth)**                  | Social + email login out of the box            |
-| Background jobs  | **Inngest** or a queue + worker         | Streak resets, leaderboard recompute           |
 | Testing          | **Vitest** + **Playwright**             | Unit + end-to-end                              |
-| Hosting          | **Vercel** + managed Postgres (Neon/Supabase) | Low-ops deploys                          |
+| Hosting          | **Vercel** + **Turso**                  | Low-ops serverless deploys                      |
 
 ---
 
@@ -83,21 +87,23 @@ npm run dev
 
 ## Proposed Project Structure
 
-A target layout once development begins (for reference — not yet created):
+What exists today is marked ✓; the rest is the target layout once development begins.
 
 ```
 questline/
+├── docs/                 # ✓ DESIGN.md, CURRICULUM.md, API.md
+├── shared/               # ✓ contract.ts — backend ↔ frontend types
+├── prototype/            # ✓ level-map.html — clickable world-map prototype
 ├── app/                  # Next.js routes (App Router)
 │   ├── (auth)/           # Login, signup
 │   ├── (learn)/          # Problem-solving UI, dashboards
-│   └── api/              # Route handlers
+│   └── api/              # Route handlers (the backend) — see docs/API.md
 ├── components/           # Reusable UI (problem card, progress bar, badge)
 ├── lib/                  # Core logic
 │   ├── levels/           # One generator per level + its common mistakes
 │   ├── progression/      # Progress-bar engine, advancement rules
 │   └── gamification/     # XP, streaks, badges, quests
 ├── prisma/               # schema.prisma, migrations, seed data
-├── docs/                 # DESIGN.md, CURRICULUM.md
 ├── public/               # Static assets
 └── tests/                # Unit + e2e
 ```
