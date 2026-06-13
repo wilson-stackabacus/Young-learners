@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { getOrCreateDemoUser } from "@/lib/session";
+import { resolveUser } from "@/lib/auth";
 import { getProblem, EngineError } from "@/lib/levelEngine";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, { params }: { params: { stage: string } }) {
-  const u = await getOrCreateDemoUser();
+export async function GET(req: Request, { params }: { params: { stage: string } }) {
+  const u = await resolveUser(req);
   const stage = Number(params.stage);
   try {
     return NextResponse.json(await getProblem(u.id, stage));

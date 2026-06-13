@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { getOrCreateDemoUser } from "@/lib/session";
+import { resolveUser } from "@/lib/auth";
 import { getMap } from "@/lib/levelEngine";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const u = await getOrCreateDemoUser();
+export async function GET(req: Request) {
+  const u = await resolveUser(req);
   return NextResponse.json(await getMap(u.id));
 }

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { getOrCreateDemoUser } from "@/lib/session";
+import { resolveUser } from "@/lib/auth";
 import type { MeResponse } from "@/shared/contract";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const u = await getOrCreateDemoUser();
+export async function GET(req: Request) {
+  const u = await resolveUser(req);
   const body: MeResponse = {
     id: u.id,
     displayName: u.displayName,

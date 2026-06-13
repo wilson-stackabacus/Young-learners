@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { getOrCreateDemoUser } from "@/lib/session";
+import { resolveUser } from "@/lib/auth";
 import { submitAnswer, EngineError } from "@/lib/levelEngine";
 import type { AnswerRequest } from "@/shared/contract";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request, { params }: { params: { stage: string } }) {
-  const u = await getOrCreateDemoUser();
+  const u = await resolveUser(req);
   const stage = Number(params.stage);
 
   let body: AnswerRequest;
