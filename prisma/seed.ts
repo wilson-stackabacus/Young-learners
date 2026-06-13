@@ -1,7 +1,7 @@
-import { PrismaClient } from "@prisma/client";
 import { buildCatalog } from "../lib/levelCatalog";
-
-const prisma = new PrismaClient();
+// Use the shared client so the seed targets Turso when TURSO_DATABASE_URL is set,
+// and the local SQLite file otherwise.
+import { prisma } from "../lib/db";
 
 const BADGES = [
   { slug: "first-steps", name: "First Steps", description: "Answer your first problem.", tier: "bronze", rule: { type: "first_attempt" } },
