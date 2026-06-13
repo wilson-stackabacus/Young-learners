@@ -163,7 +163,7 @@ export default function AppClient() {
     <div style={{ maxWidth: 920, margin: "0 auto", padding: "8px 4px 60px", color: "#e2e8f0" }}>
       {/* ── Top bar ── */}
       <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>🎯 Questline</div>
+        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>🎯 Young Learners</div>
         <div style={{ ...seg, marginLeft: 8 }}>
           {(["math", "english", "reading", "science"] as Subject[]).map((s) => (
             <button key={s} onClick={() => setSubject(s)} style={segBtn(subject === s)}>{s.charAt(0).toUpperCase() + s.slice(1)}</button>
