@@ -1,0 +1,134 @@
+// Prisma schema for Questline
+// See README for the entity overview.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  username    String   @unique
+  displayName String
+  createdAt   DateTime @default(now())
+
+  totalXp      Int    @default(0)
+  level        Int    @default(1)
+  // Streak: consecutive days with at least one attempt.
+  currentStreak    Int    @default(0)
+  longestStreak    Int    @default(0)
+  lastActiveDay    String? // ISO date (YYYY-MM-DD) of last qualifying activity, in user's timezone
+  freezesAvailable Int    @default(2) // streak freezes, refilled weekly (out of scope to refil for now)
+
+  attempts     Attempt[]
+  masteries    Mastery[]
+  badges       UserBadge[]
+}
+
+model Topic {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String
+  // Elo-style starting rating for this topic — a fresh user's mastery begins near here.
+  baseRating   Int      @default(1000)
+  order        Int      @default(0)
+
+  // Self-referential many-to-many for prerequisites. A topic is "unlocked" once every
+  // prerequisite has reached `unlockRating` (default 1100).
+  prerequisites Topic[]  @relation("TopicPrereqs")
+  unlocks       Topic[]  @relation("TopicPrereqs")
+
+  problems      Problem[]
+  masteries     Mastery[]
+}
+
+model Problem {
+  id            String   @id @default(cuid())
+  topicId       String
+  topic         Topic    @relation(fields: [topicId], references: [id])
+  // ELO rating for this individual problem — moves as users attempt it.
+  rating        Int      @default(1000)
+  // 1..5 stars; used in selection so we don't always pick the same rating.
+  difficulty    Int      @default(1)
+  prompt        String
+  // Type of answer expected.
+  kind          String   @default("numeric") // "numeric" | "multiple_choice" | "short"
+  // JSON-encoded payload for choices, hints, solution, etc.
+  payload       String   @default("{}")
+  // Problem authors may tag a subject; default is "math".
+  subject       String   @default("math")
+
+  attempts      Attempt[]
+
+  @@index([topicId])
+  @@index([rating])
+}
+
+model Attempt {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  problemId  String
+  problem    Problem  @relation(fields: [problemId], references: [id])
+  correct    Boolean
+  // Time spent in milliseconds.
+  timeMs     Int
+  // Whether the user used a hint.
+  usedHint   Boolean  @default(false)
+  // XP awarded for this attempt (post-multipliers).
+  xpAwarded  Int      @default(0)
+  // Pre-update mastery rating, stored for transparency.
+  ratingBefore Int
+  ratingAfter  Int
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([problemId])
+}
+
+// Per-user per-topic mastery rating. Created lazily on first attempt in a topic.
+model Mastery {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  topicId   String
+  topic     Topic   @relation(fields: [topicId], references: [id])
+  rating    Int     @default(1000)
+  // Number of problems solved in this topic.
+  solved    Int     @default(0)
+  // Total attempts in this topic (correct + incorrect).
+  attempts  Int     @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, topicId])
+  @@index([userId])
+}
+
+model Badge {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  description String
+  // JSON-encoded rule definition; evaluated by the badge engine.
+  rule        String
+  // Visual tier (bronze / silver / gold / platinum).
+  tier        String  @default("bronze")
+
+  unlocks     UserBadge[]
+}
+
+model UserBadge {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  badgeId    String
+  badge      Badge    @relation(fields: [badgeId], references: [id])
+  unlockedAt DateTime @default(now())
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+}

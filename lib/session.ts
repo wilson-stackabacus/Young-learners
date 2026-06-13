@@ -1,0 +1,41 @@
+import { cookies } from "next/headers";
+import { prisma } from "./db";
+
+const COOKIE = "questline.uid";
+
+/**
+ * Read the current user. If no cookie, resolve to the demo user without
+ * setting the cookie — only route handlers may set cookies.
+ */
+export async function getCurrentUser() {
+  const jar = cookies();
+  const existing = jar.get(COOKIE)?.value;
+  if (existing) {
+    const user = await prisma.user.findUnique({ where: { id: existing } });
+    if (user) return user;
+  }
+  return prisma.user.upsert({
+    where: { username: "demo" },
+    update: {},
+    create: { username: "demo", displayName: "Demo Learner" },
+  });
+}
+
+/**
+ * Route-handler variant: ensures the cookie is set after resolving the user.
+ */
+export async function getOrCreateDemoUser() {
+  const jar = cookies();
+  const existing = jar.get(COOKIE)?.value;
+  if (existing) {
+    const user = await prisma.user.findUnique({ where: { id: existing } });
+    if (user) return user;
+  }
+  const user = await prisma.user.upsert({
+    where: { username: "demo" },
+    update: {},
+    create: { username: "demo", displayName: "Demo Learner" },
+  });
+  jar.set(COOKIE, user.id, { httpOnly: true, sameSite: "lax", path: "/" });
+  return user;
+}
