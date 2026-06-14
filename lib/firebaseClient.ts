@@ -18,6 +18,7 @@ import {
   getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  updateProfile,
   browserLocalPersistence,
   setPersistence,
   signOut,
@@ -47,7 +48,12 @@ function auth(): Auth {
   return cachedAuth;
 }
 
-export async function emailSignIn(email: string, password: string): Promise<void> {
+/**
+ * One unified flow: try to sign in; if the account doesn't exist, create it.
+ * On account creation we stamp the Firebase profile's displayName with `name`
+ * so the greeting ("Hey, ___") and the leaderboard show a real name.
+ */
+export async function emailSignIn(email: string, password: string, name?: string): Promise<void> {
   const a = auth();
   await setPersistence(a, browserLocalPersistence);
   try {
@@ -56,7 +62,9 @@ export async function emailSignIn(email: string, password: string): Promise<void
     const code = (error as AuthError).code;
     if (code === "auth/user-not-found" || code === "auth/invalid-credential") {
       try {
-        await createUserWithEmailAndPassword(a, email, password);
+        const cred = await createUserWithEmailAndPassword(a, email, password);
+        const display = name?.trim();
+        if (display && cred.user) await updateProfile(cred.user, { displayName: display });
       } catch (createError) {
         if ((createError as AuthError).code === "auth/email-already-in-use") throw error;
         throw createError;

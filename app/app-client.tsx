@@ -20,6 +20,15 @@ import { emailSignIn, googleSignIn, isFirebaseConfigured, logout, watchAuth } fr
 type Tab = "game" | "progress" | "leaderboard";
 interface Leader { rank: number; id: string; username: string; displayName: string; totalXp: number; currentStreak: number; currentStage: number }
 interface LeaderboardResp { subject: Subject; leaderboard: Leader[]; currentUserRank: number | null; isGuest: boolean }
+interface ProgressData {
+  subject: Subject;
+  totalXp: number; currentStreak: number; longestStreak: number;
+  levelsCleared: number; levelsTotal: number; stars: number;
+  totalSolved: number; totalAttempts: number; accuracy: number;
+  weekly: { day: string; label: string; xp: number; solved: number }[];
+  worlds: { id: string; total: number; cleared: number; stars: number }[];
+  badges: { slug: string; name: string; description: string; tier: string; earnedAt: string }[];
+}
 
 const ACCENT = "#7c5cff";
 const CYAN = "#22d3ee";
@@ -67,6 +76,7 @@ export default function AppClient() {
   const [me, setMe] = useState<UserSummary | null>(null);
   const [map, setMap] = useState<MapResponse | null>(null);
   const [board, setBoard] = useState<LeaderboardResp | null>(null);
+  const [prog, setProg] = useState<ProgressData | null>(null);
 
   // placement test state
   const [placementProb, setPlacementProb] = useState<PlacementProbe | null>(null);
@@ -97,10 +107,12 @@ export default function AppClient() {
   // intro + login dialogs
   const [introOpen, setIntroOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [loginErr, setLoginErr] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
+  const [storedName, setStoredName] = useState<string | null>(null);
 
   const api = useCallback(async <T,>(path: string, opts: RequestInit = {}): Promise<T> => {
     const headers: Record<string, string> = { ...(opts.headers as Record<string, string>) };
@@ -164,6 +176,13 @@ export default function AppClient() {
       .then((b) => { setBoard(b); cacheSet(k, b); })
       .catch(console.error);
   }, [tab, subject, api, cacheKey]);
+
+  useEffect(() => {
+    if (tab === "progress") {
+      setProg(null);
+      api<ProgressData>(`/api/progress?subject=${subject}`).then(setProg).catch(console.error);
+    }
+  }, [tab, subject, api]);
 
   // ── game actions ──
   const openLevel = useCallback(async (stage: number) => {
@@ -244,6 +263,8 @@ export default function AppClient() {
   // ── intro + login ──
   // First visit → show the welcome/intro dialog (which then leads into login).
   useEffect(() => {
+    const n = localStorage.getItem("yl_name");
+    if (n) { setStoredName(n); setName(n); }
     if (!localStorage.getItem("yl_has_visited")) setIntroOpen(true);
   }, []);
 
@@ -253,6 +274,13 @@ export default function AppClient() {
   }, []);
   const startFromIntro = useCallback(() => { closeIntro(); setLoginOpen(true); }, [closeIntro]);
 
+  const saveName = useCallback((n: string) => {
+    const t = n.trim();
+    if (!t) return;
+    localStorage.setItem("yl_name", t);
+    setStoredName(t);
+  }, []);
+
   const closeLogin = useCallback(() => {
     localStorage.setItem("yl_has_visited", "1");
     setLoginOpen(false);
@@ -260,13 +288,13 @@ export default function AppClient() {
 
   const doEmail = async () => {
     setLoginBusy(true); setLoginErr(null);
-    try { await emailSignIn(email, pw); closeLogin(); }
+    try { await emailSignIn(email, pw, name); saveName(name); closeLogin(); }
     catch (e) { setLoginErr(e instanceof Error ? e.message : "Sign-in failed"); }
     finally { setLoginBusy(false); }
   };
   const doGoogle = async () => {
     setLoginBusy(true); setLoginErr(null);
-    try { await googleSignIn(); closeLogin(); }
+    try { if (name.trim()) saveName(name); await googleSignIn(); closeLogin(); }
     catch (e) { setLoginErr(e instanceof Error ? e.message : "Sign-in failed"); }
     finally { setLoginBusy(false); }
   };
@@ -274,15 +302,25 @@ export default function AppClient() {
   const continueAsGuest = async () => {
     setLoginBusy(true); setLoginErr(null);
     try {
-      const g = await api<{ id: string }>("/api/guest", { method: "POST" });
+      const g = await api<{ id: string }>("/api/guest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName: name.trim() || undefined }),
+      });
       guestRef.current = g.id; setGuestId(g.id);
       if (typeof window !== "undefined") sessionStorage.setItem("ql.guestId", g.id);
       setMe(null); setMap(null); // drop the previous identity's stats so the new guest shows 0, not a stale score
+      if (name.trim()) saveName(name);
       closeLogin();
       await loadMap(subject);
     } catch (e) { setLoginErr(e instanceof Error ? e.message : "Could not start guest session"); }
     finally { setLoginBusy(false); }
   };
+
+  // Resolved first name for the greeting — ignores generic placeholder names.
+  const GENERIC = ["Guest", "Demo Learner", "Learner", ""];
+  const rawName = authUser?.name ?? (me?.displayName && !GENERIC.includes(me.displayName) ? me.displayName : null) ?? storedName ?? "";
+  const greetName = rawName && !GENERIC.includes(rawName) ? rawName.split(/[\s@]/)[0] : "";
 
   return (
     <div style={{ padding: "12px 28px 60px", color: "#e2e8f0" }}>
@@ -297,6 +335,7 @@ export default function AppClient() {
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, marginLeft: "auto", alignItems: "center" }}>
+          <a href="/about" style={{ ...ghostBtn, textDecoration: "none", fontSize: 13 }}>About</a>
           <span style={chip}>⭐ <CountUp value={me?.totalXp ?? 0} /> XP</span>
           <span style={chip}>🔥 <CountUp value={me?.streakDays ?? 0} /></span>
           {authUser ? (
@@ -311,6 +350,16 @@ export default function AppClient() {
           )}
         </div>
       </header>
+
+      {/* ── Greeting ── */}
+      {greetName && (
+        <div style={{ marginBottom: 14, animation: "yl-fade-slide .5s ease both" }}>
+          <span style={{ fontSize: 20, fontWeight: 800 }}>
+            Hey, <span style={{ color: CYAN }}>{greetName}</span> 👋
+          </span>
+          <span style={{ color: "#94a3b8", fontSize: 14, marginLeft: 10 }}>Ready for some {cap(subject)}?</span>
+        </div>
+      )}
 
       {/* ── Tabs ── */}
       <div style={{ ...seg, marginBottom: 16 }}>
@@ -342,7 +391,7 @@ export default function AppClient() {
           </>
         )
       ) : tab === "progress" ? (
-        <Progress me={me} map={map} subject={subject} />
+        <Progress prog={prog} map={map} subject={subject} />
       ) : (
         <Leaderboard board={board} meId={me?.id} subject={subject} onSignUp={() => setLoginOpen(true)} />
       )}
@@ -351,6 +400,7 @@ export default function AppClient() {
 
       {loginOpen && (
         <LoginDialog
+          name={name} setName={setName}
           email={email} setEmail={setEmail} pw={pw} setPw={setPw} err={loginErr} busy={loginBusy}
           onEmail={doEmail} onGoogle={doGoogle} onGuest={continueAsGuest} onClose={closeLogin}
         />
@@ -568,10 +618,27 @@ function PlayView(props: {
 }) {
   const { level, problem, stats, boss, input, setInput, feedback, attemptsRemaining, lastGain, busy } = props;
   const done = feedback && feedback.kind !== "hint";
+  const [picked, setPicked] = useState<string | null>(null);
+  const correct = feedback?.kind === "correct";
+  const wrong = feedback?.kind === "hint" || feedback?.kind === "revealed";
+
+  // Reset the per-problem UI state whenever a new problem arrives.
+  useEffect(() => { setPicked(null); }, [problem.token]);
+
+  const handle = (answer: string) => { setPicked(answer); props.onSubmit(answer); };
+
+  // Choice color: green if it's the picked-correct one, red if picked-wrong.
+  const choiceStyle = (id: string): CSSProperties => {
+    if (picked === id && correct) return { ...choiceBtn, borderColor: "#34d399", background: "rgba(52,211,153,0.16)", color: "#bbf7d0", animation: "yl-correct-pop .5s ease" };
+    if (picked === id && wrong) return { ...choiceBtn, borderColor: "#f87171", background: "rgba(248,113,113,0.14)", color: "#fecaca", animation: "yl-shake .4s ease" };
+    return choiceBtn;
+  };
+
   return (
-    <div>
+    <div style={{ animation: "yl-fade-slide .35s ease both" }}>
       <button onClick={props.onBack} style={ghostBtn}>← Map</button>
-      <div style={{ ...glass, padding: 22, marginTop: 12 }}>
+      <div style={{ ...glass, padding: 22, marginTop: 12, position: "relative", overflow: "hidden",
+        animation: correct ? "yl-flash-good 1s ease" : undefined }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ ...pill, background: level.isBoss ? "#7f1d1d" : ACCENT }}>
             {level.isBoss ? "BOSS" : Number.isInteger(level.difficulty) ? `Lv ${level.difficulty}` : `Lv ${Math.floor(level.difficulty)}½`}
@@ -590,34 +657,44 @@ function PlayView(props: {
           </div>
         ) : null}
 
-        <div style={{ fontSize: 26, fontWeight: 700, textAlign: "center", margin: "26px 0 22px" }}>{problem.prompt}</div>
+        <div style={{ position: "relative", fontSize: 26, fontWeight: 700, textAlign: "center", margin: "26px 0 22px",
+          animation: correct ? "yl-correct-pop .55s ease" : wrong ? "yl-shake .4s ease" : undefined }}>
+          {problem.prompt}
+          {correct && (
+            <span style={{ position: "absolute", left: "50%", top: -6, transform: "translateX(-50%)", color: "#34d399",
+              fontWeight: 800, fontSize: 20, animation: "yl-xp-float 1.4s ease forwards", pointerEvents: "none" }}>
+              +{lastGain} XP
+            </span>
+          )}
+        </div>
 
         {problem.inputType === "multiple-choice" && problem.choices ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {problem.choices.map((c) => (
-              <button key={c.id} disabled={busy || !!done} onClick={() => props.onSubmit(c.id)} style={choiceBtn}>{c.label}</button>
+              <button key={c.id} disabled={busy || !!done} onClick={() => handle(c.id)} style={choiceStyle(c.id)}>{c.label}</button>
             ))}
           </div>
         ) : (
-          <div style={{ display: "flex", gap: 8 }}>
-            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && props.onSubmit(input)}
-              placeholder={problem.inputType === "fraction" ? "e.g. 5/6" : "Your answer"} disabled={busy || !!done} autoFocus style={inputBox} />
-            <button onClick={() => props.onSubmit(input)} disabled={busy} style={primaryBtn}>Submit</button>
+          <div style={{ display: "flex", gap: 8, animation: wrong ? "yl-shake .4s ease" : undefined }}>
+            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handle(input)}
+              placeholder={problem.inputType === "fraction" ? "e.g. 5/6" : "Your answer"} disabled={busy || !!done} autoFocus
+              style={{ ...inputBox, borderColor: correct ? "#34d399" : wrong ? "#f87171" : "rgba(255,255,255,0.12)", transition: "border-color .25s" }} />
+            <button onClick={() => handle(input)} disabled={busy} style={primaryBtn}>Submit</button>
           </div>
         )}
 
         {!feedback && !boss && <p style={{ fontSize: 12, color: "#64748b", marginTop: 10 }}>{attemptsRemaining} hint{attemptsRemaining === 1 ? "" : "s"} before the solution.</p>}
         {!feedback && boss && <p style={{ fontSize: 12, color: "#64748b", marginTop: 10 }}>No hints — it's a boss. A miss costs a heart.</p>}
 
-        {feedback?.kind === "hint" && <div style={{ ...note, borderColor: "#f59e0b66", background: "#78350f33" }}>💡 {feedback.text}</div>}
+        {feedback?.kind === "hint" && <div style={{ ...note, borderColor: "#f59e0b66", background: "#78350f33", animation: "yl-slide-up .35s ease both" }}>💡 {feedback.text}</div>}
         {feedback?.kind === "correct" && (
-          <div style={{ ...note, borderColor: "#34d39966", background: "#06402b55" }}>
+          <div style={{ ...note, borderColor: "#34d39966", background: "#06402b55", animation: "yl-slide-up .35s ease both" }}>
             ✅ Correct! <b>+{lastGain} XP</b>
             <div style={{ marginTop: 10 }}><button onClick={props.onNext} style={primaryBtn}>Next →</button></div>
           </div>
         )}
         {feedback?.kind === "revealed" && (
-          <div style={{ ...note, borderColor: "#f8717166", background: "#4c181855" }}>
+          <div style={{ ...note, borderColor: "#f8717166", background: "#4c181855", animation: "yl-slide-up .35s ease both" }}>
             {feedback.solution ? <>Solution: <b>{feedback.solution}</b></> : "Out of hearts — the fight resets."}
             <div style={{ marginTop: 10 }}><button onClick={props.onNext} style={primaryBtn}>Next →</button></div>
           </div>
@@ -628,33 +705,126 @@ function PlayView(props: {
 }
 
 // ── Progress ──
-function Progress({ me, map, subject }: { me: UserSummary | null; map: MapResponse | null; subject: Subject }) {
-  const cleared = map?.levels.filter((l) => l.status === "cleared").length ?? 0;
-  const total = map?.levels.length ?? 0;
-  const stars = map?.levels.reduce((a, l) => a + l.stars, 0) ?? 0;
-  const cur = map ? displayStage(map.user.currentStage) : 0;
-  const cards = [
-    { label: "Total XP", value: (me?.totalXp ?? 0).toLocaleString() },
-    { label: "Day streak", value: me?.streakDays ?? 0 },
-    { label: `${cap(subject)} stage`, value: `${cur} / ${total}` },
-    { label: "Levels cleared", value: cleared },
-    { label: "Stars earned", value: stars },
-  ];
+const TIER_COLOR: Record<string, string> = { bronze: "#cd7f32", silver: "#cbd5e1", gold: "#f5a623" };
+
+function Donut({ pct, label, sub }: { pct: number; label: string; sub: string }) {
+  const r = 46, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(1, pct)));
   return (
-    <div>
+    <div style={{ ...glass, padding: 18, display: "flex", alignItems: "center", gap: 16 }}>
+      <svg width="110" height="110" viewBox="0 0 110 110" style={{ flex: "0 0 auto" }}>
+        <circle cx="55" cy="55" r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="11" />
+        <circle cx="55" cy="55" r={r} fill="none" stroke={ACCENT} strokeWidth="11" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={off} transform="rotate(-90 55 55)"
+          style={{ transition: "stroke-dashoffset .9s cubic-bezier(.2,.9,.3,1)", strokeDashoffset: off }} />
+        <text x="55" y="50" textAnchor="middle" fontSize="22" fontWeight="800" fill="#e2e8f0">{Math.round(pct * 100)}%</text>
+        <text x="55" y="68" textAnchor="middle" fontSize="10" fill="#94a3b8">{sub}</text>
+      </svg>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>{label}</div>
+        <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 4, maxWidth: 180 }}>
+          Your rolling answer accuracy on this track.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Progress({ prog, map, subject }: { prog: ProgressData | null; map: MapResponse | null; subject: Subject }) {
+  if (!prog) return <div style={{ ...glass, padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading your progress…</div>;
+
+  const worldName = (id: string) => map?.worlds.find((w) => w.id === id)?.name ?? id;
+  const maxXp = Math.max(1, ...prog.weekly.map((d) => d.xp));
+  const weekTotal = prog.weekly.reduce((a, d) => a + d.xp, 0);
+  const cards = [
+    { label: "Total XP", value: prog.totalXp.toLocaleString(), tint: ACCENT, icon: "⭐" },
+    { label: "Day streak", value: prog.currentStreak, tint: "#f59e0b", icon: "🔥" },
+    { label: "Problems solved", value: prog.totalSolved.toLocaleString(), tint: "#34d399", icon: "✅" },
+    { label: "Levels cleared", value: `${prog.levelsCleared} / ${prog.levelsTotal}`, tint: CYAN, icon: "🏁" },
+    { label: "Stars earned", value: prog.stars, tint: "#f5a623", icon: "★" },
+  ];
+  const fresh = prog.totalAttempts === 0 && prog.totalXp === 0;
+
+  return (
+    <div style={{ animation: "yl-fade .35s ease both" }}>
+      {fresh && (
+        <div style={{ ...glass, padding: "14px 18px", marginBottom: 14, borderColor: `${ACCENT}55`, display: "flex", gap: 12, alignItems: "center" }}>
+          <span style={{ fontSize: 22 }}>🚀</span>
+          <div style={{ fontSize: 14 }}><b>Your {cap(subject)} journey starts here.</b> Solve a few problems and watch these stats come to life.</div>
+        </div>
+      )}
+
+      {/* Stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 12 }}>
         {cards.map((c) => (
-          <div key={c.label} style={{ ...glass, padding: "16px 18px" }}>
+          <div key={c.label} style={{ ...glass, padding: "16px 18px", position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", right: -8, top: -8, fontSize: 44, opacity: 0.12 }}>{c.icon}</div>
             <div style={{ fontSize: 12, color: "#94a3b8" }}>{c.label}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, marginTop: 4 }}>{c.value}</div>
+            <div style={{ fontSize: 26, fontWeight: 800, marginTop: 4, color: c.tint }}>{c.value}</div>
           </div>
         ))}
       </div>
-      <div style={{ ...glass, padding: 18, marginTop: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#94a3b8", marginBottom: 6 }}>
-          <span>{cap(subject)} ladder</span><span>{cleared} / {total} cleared</span>
+
+      {/* Weekly XP + accuracy donut */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr)", gap: 12, marginTop: 12 }}>
+        <div style={{ ...glass, padding: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>XP this week</div>
+            <div style={{ fontSize: 13, color: "#94a3b8" }}>{weekTotal.toLocaleString()} XP · 7 days</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8, height: 140 }}>
+            {prog.weekly.map((d, i) => (
+              <div key={d.day} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <div style={{ fontSize: 11, color: "#64748b" }}>{d.xp > 0 ? d.xp : ""}</div>
+                <div style={{ width: "70%", maxWidth: 34, height: `${Math.max(4, (d.xp / maxXp) * 104)}px`,
+                  background: d.xp > 0 ? `linear-gradient(180deg,${CYAN},${ACCENT})` : "rgba(255,255,255,0.06)",
+                  borderRadius: 6, transition: "height .6s cubic-bezier(.2,.9,.3,1)", animation: `yl-grow .6s ${i * 0.05}s ease both`,
+                  transformOrigin: "bottom" }} />
+                <div style={{ fontSize: 11, color: "#94a3b8" }}>{d.label}</div>
+              </div>
+            ))}
+          </div>
         </div>
-        <div style={barOuter}><div style={{ ...barInner, width: `${total ? (cleared / total) * 100 : 0}%` }} /></div>
+        <Donut pct={prog.accuracy} label="Accuracy" sub={`${prog.totalSolved}/${prog.totalAttempts}`} />
+      </div>
+
+      {/* Per-world mastery */}
+      <div style={{ ...glass, padding: 18, marginTop: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>{cap(subject)} mastery by world</div>
+        {prog.worlds.length === 0 ? (
+          <div style={{ color: "#94a3b8", fontSize: 13 }}>No worlds loaded.</div>
+        ) : prog.worlds.map((w) => {
+          const pct = w.total ? (w.cleared / w.total) * 100 : 0;
+          const tint = WORLD_TINT[w.id] ?? ACCENT;
+          return (
+            <div key={w.id} style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
+                <span style={{ fontWeight: 600 }}>{worldName(w.id)}</span>
+                <span style={{ color: "#94a3b8" }}>{w.cleared}/{w.total} cleared · {"★".repeat(Math.min(3, Math.round(w.stars / Math.max(1, w.cleared))))} </span>
+              </div>
+              <div style={barOuter}><div style={{ ...barInner, width: `${pct}%`, background: `linear-gradient(90deg,${tint},${tint}aa)` }} /></div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Badges */}
+      <div style={{ ...glass, padding: 18, marginTop: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Badges {prog.badges.length > 0 && <span style={{ color: "#94a3b8", fontWeight: 500 }}>· {prog.badges.length} earned</span>}</div>
+        {prog.badges.length === 0 ? (
+          <div style={{ color: "#94a3b8", fontSize: 13 }}>🏅 No badges yet — solve problems and clear levels to start earning them.</div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            {prog.badges.map((b) => (
+              <div key={b.slug} title={b.description} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: "rgba(255,255,255,0.04)", border: `1px solid ${(TIER_COLOR[b.tier] ?? "#888")}55` }}>
+                <span style={{ fontSize: 18 }}>🏅</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{b.name}</div>
+                  <div style={{ fontSize: 11, color: TIER_COLOR[b.tier] ?? "#94a3b8", textTransform: "capitalize" }}>{b.tier}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -781,36 +951,57 @@ function PlacementView({ subject, prob, result, busy, onAnswer, onSkip, onDone }
 
 // ── Login dialog ──
 function LoginDialog(props: {
+  name: string; setName: (s: string) => void;
   email: string; setEmail: (s: string) => void; pw: string; setPw: (s: string) => void;
   err: string | null; busy: boolean; onEmail: () => void; onGoogle: () => void; onGuest: () => void; onClose: () => void;
 }) {
   const configured = isFirebaseConfigured();
+  const named = props.name.trim().length > 0;
   return (
-    <div onClick={props.onClose} style={{ position: "fixed", inset: 0, background: "rgba(2,4,10,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ ...glass, width: 360, maxWidth: "100%", padding: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h2 style={{ margin: 0, fontSize: 19 }}>Log in with Google or Email</h2>
+    <div onClick={props.onClose} style={{ position: "fixed", inset: 0, background: "rgba(2,4,10,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16, animation: "yl-fade .25s ease both" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...glass, width: 380, maxWidth: "100%", padding: 26, animation: "yl-pop .3s cubic-bezier(.2,.9,.3,1.2) both" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
+              {named ? <>Hi, <span style={{ color: CYAN }}>{props.name.trim().split(/\s+/)[0]}</span>!</> : "Welcome to Young Learners"}
+            </h2>
+            <p style={{ margin: "4px 0 0", color: "#94a3b8", fontSize: 13.5 }}>
+              {named ? "Log in to save your progress, or jump right in." : "What should we call you?"}
+            </p>
+          </div>
           <button onClick={props.onClose} style={{ ...ghostBtn, padding: "2px 10px" }}>✕</button>
         </div>
-        {!configured && (
-          <div style={{ ...note, borderColor: "#f59e0b66", background: "#78350f33", marginTop: 0, marginBottom: 14, fontSize: 13 }}>
-            Firebase isn't configured yet — set the <code>NEXT_PUBLIC_FIREBASE_*</code> env vars to enable real logins. You're playing as a guest for now.
-          </div>
-        )}
-        <input value={props.email} onChange={(e) => props.setEmail(e.target.value)} placeholder="Email" disabled={!configured} style={{ ...inputBox, width: "100%", marginBottom: 8 }} />
-        <input value={props.pw} onChange={(e) => props.setPw(e.target.value)} type="password" placeholder="Password" disabled={!configured} style={{ ...inputBox, width: "100%", marginBottom: 12 }} />
+
+        <label style={{ display: "block", fontSize: 12, color: "#94a3b8", margin: "16px 0 6px", fontWeight: 600 }}>Your name</label>
+        <input
+          value={props.name}
+          onChange={(e) => props.setName(e.target.value)}
+          placeholder="e.g. Alex"
+          autoFocus
+          style={{ ...inputBox, width: "100%", marginBottom: 14 }}
+        />
+
+        <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "2px 0 14px" }} />
+
+        <label style={{ display: "block", fontSize: 12, color: "#94a3b8", margin: "0 0 6px", fontWeight: 600 }}>
+          Log in with email {!configured && <span style={{ color: "#f59e0b" }}>(needs Firebase setup)</span>}
+        </label>
+        <input value={props.email} onChange={(e) => props.setEmail(e.target.value)} placeholder="Email" disabled={!configured} style={{ ...inputBox, width: "100%", marginBottom: 8, opacity: configured ? 1 : 0.5 }} />
+        <input value={props.pw} onChange={(e) => props.setPw(e.target.value)} type="password" placeholder="Password" disabled={!configured} onKeyDown={(e) => e.key === "Enter" && configured && props.onEmail()} style={{ ...inputBox, width: "100%", marginBottom: 12, opacity: configured ? 1 : 0.5 }} />
         {props.err && <div style={{ color: "#f87171", fontSize: 13, marginBottom: 10 }}>{props.err}</div>}
-        <button onClick={props.onEmail} disabled={!configured || props.busy} style={{ ...primaryBtn, width: "100%", marginBottom: 8, opacity: configured ? 1 : 0.5 }}>
-          Sign in / Sign up
+        <button onClick={props.onEmail} disabled={!configured || props.busy} style={{ ...primaryBtn, width: "100%", marginBottom: 8, opacity: configured ? 1 : 0.5, cursor: configured ? "pointer" : "not-allowed" }}>
+          Log in / Sign up with Email
         </button>
-        <button onClick={props.onGoogle} disabled={!configured || props.busy} style={{ ...ghostBtn, width: "100%", marginBottom: 12, opacity: configured ? 1 : 0.5 }}>
-           Continue with Google
+        <button onClick={props.onGoogle} disabled={!configured || props.busy} style={{ ...ghostBtn, width: "100%", marginBottom: 14, opacity: configured ? 1 : 0.5, cursor: configured ? "pointer" : "not-allowed" }}>
+          Continue with Google
         </button>
-        <div style={{ textAlign: "center" }}>
-          <button onClick={props.onGuest} disabled={props.busy} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>
-            Continue as guest
-          </button>
-        </div>
+
+        <button onClick={props.onGuest} disabled={props.busy} style={{ ...primaryBtn, width: "100%", background: configured ? "rgba(255,255,255,0.06)" : ACCENT, color: configured ? "#cbd5e1" : "#fff", border: configured ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
+          {named ? `Start learning as ${props.name.trim().split(/\s+/)[0]} →` : "Continue as guest →"}
+        </button>
+        <p style={{ textAlign: "center", color: "#64748b", fontSize: 12, margin: "10px 0 0" }}>
+          Guest progress is saved on this device.
+        </p>
       </div>
     </div>
   );

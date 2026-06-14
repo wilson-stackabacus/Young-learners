@@ -61,12 +61,17 @@ export async function resolveUser(req: Request) {
     if (auth) {
       try {
         const decoded = await auth.verifyIdToken(token);
+        const name = decoded.name ?? decoded.email ?? "Learner";
         return prisma.user.upsert({
           where: { username: decoded.uid },
-          update: {},
+          // Keep the stored name in sync with the Firebase profile (e.g. after the
+          // user sets their display name on signup) without clobbering it with a
+          // bare uid — only update when we have a real name/email claim.
+          update: decoded.name || decoded.email ? { displayName: name } : {},
           create: {
             username: decoded.uid,
-            displayName: decoded.name ?? decoded.email ?? "Learner",
+            displayName: name,
+            isGuest: false,
           },
         });
       } catch (error) {

@@ -17,7 +17,9 @@ export async function getCurrentUser() {
   return prisma.user.upsert({
     where: { username: "demo" },
     update: {},
-    create: { username: "demo", displayName: "Demo Learner" },
+    // The shared/anonymous fallback is a guest so it never appears on a
+    // leaderboard — only real signed-in players are ranked.
+    create: { username: "demo", displayName: "Guest", isGuest: true },
   });
 }
 
@@ -34,7 +36,7 @@ export async function getOrCreateDemoUser() {
   const user = await prisma.user.upsert({
     where: { username: "demo" },
     update: {},
-    create: { username: "demo", displayName: "Demo Learner" },
+    create: { username: "demo", displayName: "Guest", isGuest: true },
   });
   jar.set(COOKIE, user.id, { httpOnly: true, sameSite: "lax", path: "/" });
   return user;

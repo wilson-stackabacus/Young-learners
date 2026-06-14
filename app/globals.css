@@ -105,6 +105,44 @@ body {
   animation: pulseGlow 2s infinite ease-in-out;
 }
 
+/* ── Answer + UI feedback animations ── */
+@keyframes yl-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes yl-fade-slide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes yl-slide-up { from { opacity: 0; transform: translateY(16px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes yl-pop {
+  0% { opacity: 0; transform: scale(0.9); }
+  60% { opacity: 1; transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes yl-correct-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.06); box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.25); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+}
+@keyframes yl-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(5px); }
+}
+@keyframes yl-xp-float {
+  0% { opacity: 0; transform: translateY(6px) scale(0.8); }
+  25% { opacity: 1; transform: translateY(-2px) scale(1.1); }
+  75% { opacity: 1; transform: translateY(-18px) scale(1); }
+  100% { opacity: 0; transform: translateY(-34px) scale(1); }
+}
+@keyframes yl-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes yl-flash-good {
+  0% { background: rgba(52, 211, 153, 0.0); }
+  30% { background: rgba(52, 211, 153, 0.18); }
+  100% { background: rgba(52, 211, 153, 0.0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+}
+
 /* Heatmap Styles */
 .heatmap-cell {
   aspect-ratio: 1 / 1;

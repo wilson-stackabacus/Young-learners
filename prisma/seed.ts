@@ -3,6 +3,8 @@ import { buildCatalog } from "../lib/levelCatalog";
 // and the local SQLite file otherwise.
 import { prisma } from "../lib/db";
 
+// Real, static configuration only — NO placeholder users, classrooms, or
+// progress. The leaderboard and progress views fill in from genuine play.
 const BADGES = [
   { slug: "first-steps", name: "First Steps", description: "Answer your first problem.", tier: "bronze", rule: { type: "first_attempt" } },
   { slug: "getting-going", name: "Getting Going", description: "Solve 10 problems.", tier: "bronze", rule: { type: "total_problems_solved", min: 10 } },
@@ -18,26 +20,11 @@ const QUESTS = [
   { slug: "solve-3-problems", title: "Daily Practice", description: "Solve 3 problems correctly today.", type: "problems_solved", targetValue: 3, xpReward: 50 },
   { slug: "earn-100-xp", title: "XP Grinder", description: "Earn 100 total XP today.", type: "xp_earned", targetValue: 100, xpReward: 100 },
   { slug: "clear-1-level", title: "Level Up!", description: "Reach a progress of 100% to clear any level.", type: "clear_level", targetValue: 100, xpReward: 150 },
-  { slug: "perfect-streak-5", title: "Sharp Shooter", description: "Get a correct-answer streak of 5 problems in a row.", type: "correct_streak", targetValue: 5, xpReward: 200 }
+  { slug: "perfect-streak-5", title: "Sharp Shooter", description: "Get a correct-answer streak of 5 problems in a row.", type: "correct_streak", targetValue: 5, xpReward: 200 },
 ];
 
-const SUBJECT_FIRST_STAGE: Record<string, number> = { math: 1, english: 1001, reading: 2001, science: 3001 };
-
-async function seedSubjectProgress(userId: string, mathStage: number, mathXp: number, streak: number) {
-  const today = new Date().toISOString().slice(0, 10);
-  const rows = [
-    { subject: "math", currentStage: mathStage, totalXp: mathXp, currentStreak: streak },
-    { subject: "english", currentStage: SUBJECT_FIRST_STAGE.english + Math.min(8, Math.floor(mathStage / 3)), totalXp: Math.floor(mathXp * 0.4), currentStreak: Math.max(0, streak - 1) },
-    { subject: "reading", currentStage: SUBJECT_FIRST_STAGE.reading + Math.min(6, Math.floor(mathStage / 4)), totalXp: Math.floor(mathXp * 0.25), currentStreak: Math.max(0, streak - 2) },
-    { subject: "science", currentStage: SUBJECT_FIRST_STAGE.science + Math.min(6, Math.floor(mathStage / 4)), totalXp: Math.floor(mathXp * 0.3), currentStreak: Math.max(0, streak - 1) },
-  ];
-  for (const r of rows) {
-    await prisma.subjectProgress.create({ data: { userId, ...r, longestStreak: r.currentStreak + 2, lastActiveDay: today } });
-  }
-}
-
 async function main() {
-  console.log("🌱 Seeding merged database with level ladder and classrooms...");
+  console.log("🌱 Seeding levels, badges, and quests (no placeholder data)...");
 
   // Wipe data in FK-safe order.
   await prisma.userQuest.deleteMany();
@@ -53,9 +40,9 @@ async function main() {
   await prisma.level.deleteMany();
   await prisma.user.deleteMany();
 
-  console.log("Wiped old seed data.");
+  console.log("Wiped old data.");
 
-  // 1. Seed levels
+  // 1. Seed the level ladder (the real catalog).
   const catalog = buildCatalog();
   await prisma.level.createMany({
     data: catalog.map((l) => ({
@@ -73,153 +60,21 @@ async function main() {
   });
   console.log(`Seeded ${catalog.length} levels.`);
 
-  // 2. Seed badges
+  // 2. Seed badge definitions.
   for (const b of BADGES) {
     await prisma.badge.create({
-      data: {
-        slug: b.slug,
-        name: b.name,
-        description: b.description,
-        tier: b.tier,
-        rule: JSON.stringify(b.rule),
-      },
+      data: { slug: b.slug, name: b.name, description: b.description, tier: b.tier, rule: JSON.stringify(b.rule) },
     });
   }
   console.log(`Seeded ${BADGES.length} badges.`);
 
-  // 3. Seed quests
+  // 3. Seed quest definitions.
   for (const q of QUESTS) {
-    await prisma.quest.create({
-      data: q,
-    });
+    await prisma.quest.create({ data: q });
   }
   console.log(`Seeded ${QUESTS.length} quests.`);
 
-  // 4. Create Users
-  // Standard demo user
-  const demo = await prisma.user.create({
-    data: {
-      username: "demo",
-      displayName: "Demo Learner",
-      role: "student",
-      totalXp: 120,
-      currentStage: 3,
-      currentStreak: 2,
-      longestStreak: 5,
-      lastActiveDay: new Date().toISOString().slice(0, 10),
-    },
-  });
-  await seedSubjectProgress(demo.id, 3, 120, 2);
-
-  // Teacher user
-  const teacher = await prisma.user.create({
-    data: {
-      username: "teacher_jane",
-      displayName: "Ms. Jane",
-      role: "teacher",
-    },
-  });
-
-  // Mock student users to populate the leaderboard & classrooms
-  const mockStudents = [
-    { username: "alice", displayName: "Alice Green", totalXp: 1250, currentStage: 15, streak: 8 },
-    { username: "bob", displayName: "Bob Smith", totalXp: 450, currentStage: 7, streak: 1 },
-    { username: "charlie", displayName: "Charlie Brown", totalXp: 2100, currentStage: 25, streak: 12 },
-    { username: "diana", displayName: "Diana Prince", totalXp: 3400, currentStage: 42, streak: 21 },
-  ];
-
-  const studentRows = [];
-  for (const s of mockStudents) {
-    const studentRow = await prisma.user.create({
-      data: {
-        username: s.username,
-        displayName: s.displayName,
-        role: "student",
-        totalXp: s.totalXp,
-        currentStage: s.currentStage,
-        currentStreak: s.streak,
-        longestStreak: s.streak + 3,
-        lastActiveDay: new Date().toISOString().slice(0, 10),
-      },
-    });
-    studentRows.push(studentRow);
-    await seedSubjectProgress(studentRow.id, s.currentStage, s.totalXp, s.streak);
-  }
-  console.log("Created demo, teacher, and classmate student accounts.");
-
-  // 5. Create Classroom and enroll students
-  const classroom = await prisma.classroom.create({
-    data: {
-      name: "Ms. Jane's Coding Camp",
-      code: "CAMP26",
-      teacherId: teacher.id,
-    },
-  });
-
-  // Enroll demo and mock students
-  const membersToEnroll = [demo, ...studentRows];
-  for (const m of membersToEnroll) {
-    await prisma.classroomMember.create({
-      data: {
-        classroomId: classroom.id,
-        userId: m.id,
-      },
-    });
-  }
-  console.log(`Created classroom '${classroom.name}' with code '${classroom.code}' and enrolled all students.`);
-
-  // 6. Create level progress records for members to generate a realistic heatmap
-  // We will seed progress for the first 5 levels for each enrolled student.
-  for (const s of membersToEnroll) {
-    for (let stage = 1; stage <= 5; stage++) {
-      // Completed level progress is cleared, current progress is between 0-90, locked is locked.
-      let status = "locked";
-      let progress = 0;
-      let stars = 0;
-
-      if (stage < s.currentStage) {
-        status = "cleared";
-        progress = 100;
-        stars = Math.floor(Math.random() * 3) + 1; // 1 to 3 stars
-      } else if (stage === s.currentStage) {
-        status = "current";
-        progress = Math.floor(Math.random() * 90); // 0 to 90
-        stars = 0;
-      }
-
-      await prisma.levelProgress.create({
-        data: {
-          userId: s.id,
-          stage,
-          status,
-          progress,
-          stars,
-          totalCorrect: status === "cleared" ? 8 : 2,
-          totalAttempts: status === "cleared" ? 10 : 3,
-          recentResults: status === "cleared" ? JSON.stringify([true, true, false, true, true, true, true, true, false, true]) : JSON.stringify([true, false, true]),
-        },
-      });
-
-      // Also create a few mock attempts
-      if (status === "cleared" || status === "current") {
-        await prisma.attempt.create({
-          data: {
-            userId: s.id,
-            stage,
-            prompt: `Sample Problem for Level ${stage}`,
-            givenAnswer: "42",
-            correct: true,
-            hintsUsed: 0,
-            solvedAfterHint: false,
-            xpAwarded: 10,
-          },
-        });
-      }
-    }
-  }
-  console.log("Seeded mock level progress and attempts for students.");
-
-  console.log("✅ Seed completed successfully!");
+  console.log("✅ Seed completed — no placeholder accounts or progress.");
 }
 
 main()
