@@ -19,8 +19,10 @@ export async function POST(req: Request, { params }: { params: { stage: string }
     return NextResponse.json({ error: { code: "missing_fields", message: "missing fields" } }, { status: 400 });
   }
 
+  const responseMs = typeof body.responseMs === "number" && body.responseMs >= 0 ? Math.round(body.responseMs) : null;
+
   try {
-    return NextResponse.json(await submitAnswer(u.id, stage, body.token, body.answer));
+    return NextResponse.json(await submitAnswer(u.id, stage, body.token, body.answer, responseMs));
   } catch (e) {
     if (e instanceof EngineError) {
       return NextResponse.json({ error: { code: e.code, message: e.code } }, { status: e.status });

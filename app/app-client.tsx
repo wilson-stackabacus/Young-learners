@@ -56,6 +56,7 @@ const levelTitle = (l: LevelInfo) =>
 export default function AppClient() {
   const tokenRef = useRef<string | null>(null);
   const guestRef = useRef<string | null>(null);
+  const presentedRef = useRef<number>(0); // when the current problem was shown (for response-time analytics)
   const [authUser, setAuthUser] = useState<{ name: string; token: string } | null>(null);
   const [guestId, setGuestId] = useState<string | null>(null);
   const [subject, setSubject] = useState<Subject>("math");
@@ -155,6 +156,7 @@ export default function AppClient() {
       const res = await api<{ level: LevelInfo; problem: Problem; stats: Stats; boss?: BossState }>(`/api/levels/${stage}/problem`);
       setLevel(res.level); setProblem(res.problem); setStats(res.stats); setBoss(res.boss ?? null);
       setFeedback(null); setPendingNext(null); setAdvanceStage(null); setInput(""); setAttemptsRemaining(2);
+      presentedRef.current = Date.now();
       setView("play");
     } catch (e) { console.error(e); } finally { setBusy(false); }
   }, [api]);
@@ -163,8 +165,9 @@ export default function AppClient() {
     if (!problem || busy || !answer.trim()) return;
     setBusy(true);
     try {
+      const responseMs = presentedRef.current ? Date.now() - presentedRef.current : undefined;
       const res = await api<AnswerResponse>(`/api/levels/${problem.stage}/answer`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: problem.token, answer }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: problem.token, answer, responseMs }),
       });
       setStats(res.stats);
       if (res.boss) setBoss(res.boss);
@@ -179,7 +182,7 @@ export default function AppClient() {
 
   const next = useCallback(() => {
     if (advanceStage) { void openLevel(advanceStage); return; }
-    if (pendingNext) { setProblem(pendingNext); setPendingNext(null); setFeedback(null); setInput(""); setAttemptsRemaining(2); }
+    if (pendingNext) { setProblem(pendingNext); setPendingNext(null); setFeedback(null); setInput(""); setAttemptsRemaining(2); presentedRef.current = Date.now(); }
   }, [advanceStage, pendingNext, openLevel]);
 
   // Force-refresh on return from play — XP / stars / stage just changed.

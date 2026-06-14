@@ -134,6 +134,7 @@ model Attempt {
   solvedAfterHint Boolean  @default(false)
   isBoss          Boolean  @default(false)
   xpAwarded       Int      @default(0)
+  responseMs      Int? // client-measured time from problem shown to this answer (analytics)
   createdAt       DateTime @default(now())
 
   @@index([userId, createdAt])

@@ -131,6 +131,7 @@ export interface ProblemResponse {
 export interface AnswerRequest {
   token: string;          // from the Problem the user is answering
   answer: string;         // the user's input as a string; the backend parses it
+  responseMs?: number;    // client-measured ms from problem shown to submit (analytics)
 }
 
 export type AnswerState =

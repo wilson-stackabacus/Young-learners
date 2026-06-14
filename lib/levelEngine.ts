@@ -215,6 +215,7 @@ export async function submitAnswer(
   stage: number,
   token: string,
   answer: string,
+  responseMs: number | null = null,
 ): Promise<AnswerResponse> {
   const pending = await prisma.pendingProblem.findUnique({ where: { token } });
   if (!pending || pending.userId !== userId || pending.stage !== stage) {
@@ -271,7 +272,7 @@ export async function submitAnswer(
           },
         });
       }
-      const ctx: AnswerCtx = { user, cat, subject, sp, prog, pending: pendingTx, answer };
+      const ctx: AnswerCtx = { user, cat, subject, sp, prog, pending: pendingTx, answer, responseMs };
       return cat.isBoss ? handleBossAnswer(tx, ctx) : handlePracticeAnswer(tx, ctx);
     },
     { timeout: 20000, maxWait: 10000 },
@@ -289,6 +290,7 @@ type AnswerCtx = {
   prog: Prisma.LevelProgressGetPayload<{}>;
   pending: Prisma.PendingProblemGetPayload<{}>;
   answer: string;
+  responseMs: number | null;
 };
 
 // ── Practice stages: progress bar + two-hint flow ──
@@ -326,7 +328,7 @@ async function handlePracticeAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerRespo
   }
 
   await persistResolution(tx, {
-    userId: user.id, subject, stage, pending, answer, correct: outcomeCorrect,
+    userId: user.id, subject, stage, pending, answer, responseMs: ctx.responseMs, correct: outcomeCorrect,
     hintsUsed: pending.attemptsUsed, solvedAfterHint, isBoss: false, xpAwarded: xp.total,
     progData: { progress: newProgress, status, stars, totalCorrect: prog.totalCorrect + (outcomeCorrect ? 1 : 0), totalAttempts: prog.totalAttempts + 1, recentResults: JSON.stringify(recent), clearedAt },
     progId: prog.id, advanced, spId: sp.id, newStage, newSubjectXp: sp.totalXp + xp.total,
@@ -392,7 +394,7 @@ async function handleBossAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerResponse>
   }
 
   await persistResolution(tx, {
-    userId: user.id, subject, stage, pending, answer, correct: check.correct,
+    userId: user.id, subject, stage, pending, answer, responseMs: ctx.responseMs, correct: check.correct,
     hintsUsed: 0, solvedAfterHint: false, isBoss: true, xpAwarded: xpGained,
     progData: { status, stars, bossHp, hearts, totalCorrect: prog.totalCorrect + (check.correct ? 1 : 0), totalAttempts: prog.totalAttempts + 1, clearedAt },
     progId: prog.id, advanced, spId: sp.id, newStage, newSubjectXp: sp.totalXp + xpGained,
@@ -420,6 +422,7 @@ async function persistResolution(
     stage: number;
     pending: Prisma.PendingProblemGetPayload<{}>;
     answer: string;
+    responseMs: number | null;
     correct: boolean;
     hintsUsed: number;
     solvedAfterHint: boolean;
@@ -439,7 +442,7 @@ async function persistResolution(
   await tx.attempt.create({
     data: {
       userId: p.userId, stage: p.stage, prompt: p.pending.prompt, givenAnswer: p.answer,
-      correct: p.correct, hintsUsed: p.hintsUsed, solvedAfterHint: p.solvedAfterHint, isBoss: p.isBoss, xpAwarded: p.xpAwarded,
+      correct: p.correct, hintsUsed: p.hintsUsed, solvedAfterHint: p.solvedAfterHint, isBoss: p.isBoss, xpAwarded: p.xpAwarded, responseMs: p.responseMs,
     },
   });
   await tx.levelProgress.update({ where: { id: p.progId }, data: p.progData });
