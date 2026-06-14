@@ -73,13 +73,20 @@ export async function googleSignIn(): Promise<void> {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   try {
-    // Redirect is the primary method — it avoids popup-blocker errors. It
-    // navigates away to Google and returns; getRedirectResult (in watchAuth)
-    // and onAuthStateChanged finalize the sign-in on the way back.
-    await signInWithRedirect(a, provider);
-  } catch {
-    // Environments where redirect isn't available → fall back to a popup.
+    // Popup is the reliable primary path. Redirect sign-in breaks under modern
+    // third-party-cookie restrictions (and silently navigates away), so it's
+    // only a fallback for when the popup is actually blocked/unsupported.
     await signInWithPopup(a, provider);
+  } catch (error) {
+    const code = (error as AuthError).code;
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+      return; // user dismissed the popup — not a failure
+    }
+    if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-environment") {
+      await signInWithRedirect(a, provider);
+      return;
+    }
+    throw error;
   }
 }
 

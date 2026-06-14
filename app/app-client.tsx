@@ -118,14 +118,15 @@ export default function AppClient() {
     return `yl.${kind}.${id}`;
   }, []);
 
-  // cache-first: paint instantly from the browser, only hit the network when
-  // there's no cache or `fresh` is forced (e.g. after solving a problem).
-  const loadMap = useCallback(async (s: Subject, fresh = false) => {
+  // Stale-while-revalidate: paint instantly from the browser cache (no flash or
+  // "Loading…"), then ALWAYS refetch and update. So a value that changed — XP
+  // after solving, or a brand-new guest at 0 — corrects itself on its own
+  // instead of showing a stale score until you manually reload.
+  const loadMap = useCallback(async (s: Subject) => {
     const mk = cacheKey("map." + s), uk = cacheKey("me");
-    if (!fresh) {
-      const cm = cacheGet<MapResponse>(mk), cu = cacheGet<UserSummary>(uk);
-      if (cm && cu) { setMap(cm); setMe(cu); return; }
-    }
+    const cm = cacheGet<MapResponse>(mk), cu = cacheGet<UserSummary>(uk);
+    if (cm) setMap(cm);
+    if (cu) setMe(cu);
     const [m, u] = await Promise.all([
       api<MapResponse>(`/api/map?subject=${s}`),
       api<UserSummary>("/api/me"),
@@ -206,7 +207,7 @@ export default function AppClient() {
   }, [advanceStage, pendingNext, openLevel]);
 
   // Force-refresh on return from play — XP / stars / stage just changed.
-  const backToMap = useCallback(async () => { await loadMap(subject, true); setView("map"); }, [loadMap, subject]);
+  const backToMap = useCallback(async () => { await loadMap(subject); setView("map"); }, [loadMap, subject]);
 
   // ── placement test ──
   const startPlacement = useCallback(async () => {
@@ -232,12 +233,12 @@ export default function AppClient() {
     setPlacementBusy(true);
     try { await api("/api/placement", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, action: "skip" }) }); }
     catch (e) { console.error(e); }
-    finally { setPlacementProb(null); setPlacementResult(null); setPlacementBusy(false); await loadMap(subject, true); }
+    finally { setPlacementProb(null); setPlacementResult(null); setPlacementBusy(false); await loadMap(subject); }
   }, [api, subject, loadMap]);
 
   const finishPlacement = useCallback(async () => {
     setPlacementProb(null); setPlacementResult(null);
-    await loadMap(subject, true);
+    await loadMap(subject);
   }, [loadMap, subject]);
 
   // ── intro + login ──
@@ -269,13 +270,14 @@ export default function AppClient() {
     catch (e) { setLoginErr(e instanceof Error ? e.message : "Sign-in failed"); }
     finally { setLoginBusy(false); }
   };
-  const doLogout = async () => { await logout(); tokenRef.current = null; setAuthUser(null); loadMap(subject).catch(console.error); };
+  const doLogout = async () => { await logout(); tokenRef.current = null; setAuthUser(null); setMe(null); setMap(null); loadMap(subject).catch(console.error); };
   const continueAsGuest = async () => {
     setLoginBusy(true); setLoginErr(null);
     try {
       const g = await api<{ id: string }>("/api/guest", { method: "POST" });
       guestRef.current = g.id; setGuestId(g.id);
       if (typeof window !== "undefined") sessionStorage.setItem("ql.guestId", g.id);
+      setMe(null); setMap(null); // drop the previous identity's stats so the new guest shows 0, not a stale score
       closeLogin();
       await loadMap(subject);
     } catch (e) { setLoginErr(e instanceof Error ? e.message : "Could not start guest session"); }

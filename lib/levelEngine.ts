@@ -520,7 +520,9 @@ async function evaluateAndAwardBadges(tx: DB, userId: string): Promise<NewBadge[
 // them — every stage below the placement point is auto-cleared to 3★ with XP,
 // and SubjectProgress.placementDone is set so we never re-ask.
 
-const PLACEMENT_XP_PER_STAGE = 8;
+// Placement only sets your starting level + marks lower levels cleared; it does
+// NOT award XP, so every new profile starts at 0 and earns XP by actually playing.
+const PLACEMENT_XP_PER_STAGE = 0;
 
 function maxLevelOf(subject: Subject): number {
   return catalogForSubject(subject).reduce((m, c) => (Number.isInteger(c.difficulty) && c.difficulty > m ? c.difficulty : m), 1);
