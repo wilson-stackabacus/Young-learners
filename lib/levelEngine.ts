@@ -165,6 +165,8 @@ async function createPending(db: DB, userId: string, stage: number, isBoss: bool
   return {
     token, stage, prompt: g.prompt, latex: g.latex, inputType: g.inputType,
     ...(g.choices ? { choices: g.choices } : {}),
+    // Ship the answer bundle so the client checks instantly (K-8 — no cheating risk).
+    answer: g.answer, hints: g.hints, solution: g.solution, commonMistakes: g.commonMistakes,
   };
 }
 
@@ -216,6 +218,7 @@ export async function submitAnswer(
   token: string,
   answer: string,
   responseMs: number | null = null,
+  hintsUsed: number | null = null,
 ): Promise<AnswerResponse> {
   const pending = await prisma.pendingProblem.findUnique({ where: { token } });
   if (!pending || pending.userId !== userId || pending.stage !== stage) {
@@ -225,7 +228,9 @@ export async function submitAnswer(
   const subject = cat.subject;
 
   // Practice + wrong + hints remain → return a hint (outside any transaction).
-  if (!cat.isBoss) {
+  // Skipped when the client ran the hint flow locally (hintsUsed provided) and
+  // is calling us only to persist the resolved attempt.
+  if (!cat.isBoss && hintsUsed === null) {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const sp = await getSubjectProgress(prisma, userId, subject);
     const prog =
@@ -272,7 +277,7 @@ export async function submitAnswer(
           },
         });
       }
-      const ctx: AnswerCtx = { user, cat, subject, sp, prog, pending: pendingTx, answer, responseMs };
+      const ctx: AnswerCtx = { user, cat, subject, sp, prog, pending: pendingTx, answer, responseMs, hintsUsed };
       return cat.isBoss ? handleBossAnswer(tx, ctx) : handlePracticeAnswer(tx, ctx);
     },
     { timeout: 20000, maxWait: 10000 },
@@ -291,23 +296,25 @@ type AnswerCtx = {
   pending: Prisma.PendingProblemGetPayload<{}>;
   answer: string;
   responseMs: number | null;
+  hintsUsed: number | null; // client-reported hint count (client-side hint flow)
 };
 
 // ── Practice stages: progress bar + two-hint flow ──
 async function handlePracticeAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerResponse> {
   const { user, cat, subject, sp, prog, pending, answer } = ctx;
   const stage = cat.stage;
+  const usedHints = ctx.hintsUsed ?? pending.attemptsUsed; // client-side or server-side hint count
   const commonMistakes = JSON.parse(pending.commonMistakes);
   const check = checkAnswer(pending.inputType as ProblemInputType, pending.answer, answer, commonMistakes);
 
   const outcomeCorrect = check.correct;
-  const solvedAfterHint = outcomeCorrect && pending.attemptsUsed > 0;
+  const solvedAfterHint = outcomeCorrect && usedHints > 0;
   const recent = pushRecent(JSON.parse(prog.recentResults) as boolean[], outcomeCorrect);
   const accuracy = accuracyFromRecent(recent);
   const progressDelta = outcomeCorrect ? gainForCorrect(accuracy) : -PROGRESSION.WRONG_PENALTY;
   const newProgress = Math.max(0, Math.min(PROGRESSION.ADVANCE_AT, prog.progress + progressDelta));
 
-  const xp = awardXp({ difficulty: difficultyBucket(cat.difficulty), timeMs: 8000, usedHint: pending.attemptsUsed > 0, streakDays: sp.currentStreak, correct: outcomeCorrect });
+  const xp = awardXp({ difficulty: difficultyBucket(cat.difficulty), timeMs: 8000, usedHint: usedHints > 0, streakDays: sp.currentStreak, correct: outcomeCorrect });
   const streak = updateStreak({ currentStreak: sp.currentStreak, longestStreak: sp.longestStreak, lastActiveDay: sp.lastActiveDay, freezesAvailable: user.freezesAvailable });
 
   const cleared = newProgress >= PROGRESSION.ADVANCE_AT;
@@ -329,7 +336,7 @@ async function handlePracticeAnswer(tx: DB, ctx: AnswerCtx): Promise<AnswerRespo
 
   await persistResolution(tx, {
     userId: user.id, subject, stage, pending, answer, responseMs: ctx.responseMs, correct: outcomeCorrect,
-    hintsUsed: pending.attemptsUsed, solvedAfterHint, isBoss: false, xpAwarded: xp.total,
+    hintsUsed: usedHints, solvedAfterHint, isBoss: false, xpAwarded: xp.total,
     progData: { progress: newProgress, status, stars, totalCorrect: prog.totalCorrect + (outcomeCorrect ? 1 : 0), totalAttempts: prog.totalAttempts + 1, recentResults: JSON.stringify(recent), clearedAt },
     progId: prog.id, advanced, spId: sp.id, newStage, newSubjectXp: sp.totalXp + xp.total,
     newUserTotalXp: user.totalXp + xp.total, userLongest: Math.max(user.longestStreak, streak.longestStreak), streak,

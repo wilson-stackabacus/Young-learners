@@ -16,6 +16,7 @@ import type {
   UserSummary,
 } from "@/shared/contract";
 import { emailSignIn, googleSignIn, isFirebaseConfigured, logout, watchAuth } from "@/lib/firebaseClient";
+import { checkAnswer } from "@/lib/answer";
 
 type Tab = "game" | "progress" | "leaderboard";
 interface Leader { rank: number; id: string; username: string; displayName: string; totalXp: number; currentStreak: number; currentStage: number }
@@ -67,6 +68,7 @@ const levelTitle = (l: LevelInfo) =>
 export default function AppClient() {
   const tokenRef = useRef<string | null>(null);
   const guestRef = useRef<string | null>(null);
+  const creatingGuestRef = useRef(false); // guard against creating duplicate guests
   const presentedRef = useRef<number>(0); // when the current problem was shown (for response-time analytics)
   const [authUser, setAuthUser] = useState<{ name: string; token: string } | null>(null);
   const [guestId, setGuestId] = useState<string | null>(null);
@@ -94,6 +96,7 @@ export default function AppClient() {
   const [pendingNext, setPendingNext] = useState<Problem | null>(null);
   const [advanceStage, setAdvanceStage] = useState<number | null>(null);
   const [attemptsRemaining, setAttemptsRemaining] = useState(2);
+  const [hintsUsed, setHintsUsed] = useState(0);
   const [lastGain, setLastGain] = useState(0);
   const [busy, setBusy] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; tone: string }[]>([]);
@@ -153,9 +156,20 @@ export default function AppClient() {
     // before we start listening — api() then attaches the X-Guest-Id header.
     const stored = typeof window !== "undefined" ? sessionStorage.getItem("ql.guestId") : null;
     if (stored) { guestRef.current = stored; setGuestId(stored); }
-    const unsub = watchAuth((u) => {
+    const unsub = watchAuth(async (u) => {
       tokenRef.current = u?.token ?? null;
       setAuthUser(u);
+      // Not logged in and no guest yet → start a fresh guest so every visitor gets
+      // a clean 0-start slate, not the shared seeded demo account's stats.
+      if (!u && !guestRef.current && !creatingGuestRef.current) {
+        creatingGuestRef.current = true;
+        try {
+          const g = await api<{ id: string }>("/api/guest", { method: "POST" });
+          guestRef.current = g.id; setGuestId(g.id);
+          if (typeof window !== "undefined") sessionStorage.setItem("ql.guestId", g.id);
+        } catch (e) { console.error(e); }
+        finally { creatingGuestRef.current = false; }
+      }
       loadMap(subject).catch(console.error);
     });
     return unsub;
@@ -185,44 +199,71 @@ export default function AppClient() {
   }, [tab, subject, api]);
 
   // ── game actions ──
+  type ProblemPayload = { level: LevelInfo; problem: Problem; stats: Stats; boss?: BossState };
+  const showProblem = useCallback((res: ProblemPayload) => {
+    setLevel(res.level); setProblem(res.problem); setStats(res.stats); setBoss(res.boss ?? null);
+    setFeedback(null); setPendingNext(null); setAdvanceStage(null); setInput(""); setAttemptsRemaining(2); setHintsUsed(0);
+    presentedRef.current = Date.now();
+    setView("play");
+  }, []);
+
   const openLevel = useCallback(async (stage: number) => {
     setBusy(true);
-    try {
-      const res = await api<{ level: LevelInfo; problem: Problem; stats: Stats; boss?: BossState }>(`/api/levels/${stage}/problem`);
-      setLevel(res.level); setProblem(res.problem); setStats(res.stats); setBoss(res.boss ?? null);
-      setFeedback(null); setPendingNext(null); setAdvanceStage(null); setInput(""); setAttemptsRemaining(2);
-      presentedRef.current = Date.now();
-      setView("play");
-    } catch (e) { console.error(e); } finally { setBusy(false); }
-  }, [api]);
+    try { showProblem(await api<ProblemPayload>(`/api/levels/${stage}/problem`)); }
+    catch (e) { console.error(e); } finally { setBusy(false); }
+  }, [api, showProblem]);
 
-  const submit = useCallback(async (answer: string) => {
-    if (!problem || busy || !answer.trim()) return;
-    setBusy(true);
+  // Persist a resolved attempt in the background; reconcile XP / next / advance / boss when it lands.
+  const persistResolution = useCallback(async (prob: Problem, answer: string, used: number, serverFeedback: boolean) => {
     try {
       const responseMs = presentedRef.current ? Date.now() - presentedRef.current : undefined;
-      const res = await api<AnswerResponse>(`/api/levels/${problem.stage}/answer`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: problem.token, answer, responseMs }),
+      const res = await api<AnswerResponse>(`/api/levels/${prob.stage}/answer`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: prob.token, answer, responseMs, hintsUsed: used }),
       });
       setStats(res.stats);
       if (res.boss) setBoss(res.boss);
-      if (res.state === "hint") {
-        setFeedback({ kind: "hint", text: res.hint }); setAttemptsRemaining(res.attemptsRemaining); setInput("");
-      } else {
+      if (serverFeedback) {
+        if (res.state === "hint") { setFeedback({ kind: "hint", text: res.hint }); setAttemptsRemaining(res.attemptsRemaining); setInput(""); return; }
         setFeedback({ kind: res.state === "solved" ? "correct" : "revealed", solution: res.solution });
-        setPendingNext(res.nextProblem ?? null); setAdvanceStage(res.advanced?.toStage ?? null); setLastGain(res.stats.xpGained);
-        if (res.state === "solved") {
-          if (res.stats.xpGained > 0) pushToast(`+${res.stats.xpGained} XP`, "#34d399");
-          if (res.boss?.defeated) pushToast("Dragon defeated! 🐉", "#fbbf24");
-          else if (res.advanced) pushToast("Level cleared! 🎉", "#fbbf24");
-        }
       }
-    } catch (e) { console.error(e); } finally { setBusy(false); }
-  }, [api, problem, busy, pushToast]);
+      setPendingNext(res.nextProblem ?? null); setAdvanceStage(res.advanced?.toStage ?? null); setLastGain(res.stats.xpGained);
+      if (res.state === "solved") {
+        if (res.stats.xpGained > 0) pushToast(`+${res.stats.xpGained} XP`, "#34d399");
+        if (res.boss?.defeated) pushToast("Dragon defeated! 🐉", "#fbbf24");
+        else if (res.advanced) pushToast("Level cleared! 🎉", "#fbbf24");
+      }
+    } catch (e) { console.error(e); }
+  }, [api, pushToast]);
+
+  const submit = useCallback(async (answer: string) => {
+    if (!problem || busy || !answer.trim()) return;
+    const a = answer.trim();
+
+    // Practice with the answer bundle → check INSTANTLY on the client (K-8: no
+    // cheating concern). Hints are local; only the resolved attempt is persisted,
+    // in the background, so there's no submit round-trip and zero wait.
+    if (problem.answer !== undefined && !boss) {
+      const check = checkAnswer(problem.inputType, problem.answer, a, problem.commonMistakes ?? []);
+      if (!check.correct && attemptsRemaining > 0) {
+        const hint = check.mistake?.hint ?? problem.hints?.[hintsUsed] ?? problem.hints?.[(problem.hints?.length ?? 1) - 1];
+        setFeedback({ kind: "hint", text: hint }); setAttemptsRemaining((n) => n - 1); setHintsUsed((n) => n + 1); setInput("");
+        return;
+      }
+      setFeedback({ kind: check.correct ? "correct" : "revealed", solution: problem.solution });
+      void persistResolution(problem, a, hintsUsed, false); // feedback already shown — persist quietly
+      return;
+    }
+
+    // Boss (or a problem with no bundle) → server-authoritative.
+    setBusy(true);
+    try { await persistResolution(problem, a, boss ? 0 : hintsUsed, true); }
+    finally { setBusy(false); }
+  }, [problem, busy, boss, attemptsRemaining, hintsUsed, persistResolution]);
 
   const next = useCallback(() => {
     if (advanceStage) { void openLevel(advanceStage); return; }
-    if (pendingNext) { setProblem(pendingNext); setPendingNext(null); setFeedback(null); setInput(""); setAttemptsRemaining(2); presentedRef.current = Date.now(); }
+    if (pendingNext) { setProblem(pendingNext); setPendingNext(null); setFeedback(null); setInput(""); setAttemptsRemaining(2); setHintsUsed(0); presentedRef.current = Date.now(); }
   }, [advanceStage, pendingNext, openLevel]);
 
   // Force-refresh on return from play — XP / stars / stage just changed.

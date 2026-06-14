@@ -125,6 +125,13 @@ export interface Problem {
   latex?: string;         // optional LaTeX for KaTeX rendering
   inputType: ProblemInputType;
   choices?: { id: string; label: string }[];  // only for 'multiple-choice'
+  // K-8 app: the answer ships with the problem so the client can check it
+  // INSTANTLY (no submit round-trip / no cheating concern). Persistence of the
+  // result still happens in a background call to /answer.
+  answer?: string;
+  hints?: string[];
+  solution?: string;
+  commonMistakes?: { value: string; hint: string }[];
 }
 
 /** Live stats bundled with every problem and every answer. */
@@ -153,6 +160,7 @@ export interface AnswerRequest {
   token: string;          // from the Problem the user is answering
   answer: string;         // the user's input as a string; the backend parses it
   responseMs?: number;    // client-measured ms from problem shown to submit (analytics)
+  hintsUsed?: number;     // hints the client already showed locally → resolve straight to persist
 }
 
 export type AnswerState =

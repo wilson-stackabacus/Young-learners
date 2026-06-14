@@ -20,9 +20,10 @@ export async function POST(req: Request, { params }: { params: { stage: string }
   }
 
   const responseMs = typeof body.responseMs === "number" && body.responseMs >= 0 ? Math.round(body.responseMs) : null;
+  const hintsUsed = typeof body.hintsUsed === "number" && body.hintsUsed >= 0 ? Math.round(body.hintsUsed) : null;
 
   try {
-    return NextResponse.json(await submitAnswer(u.id, stage, body.token, body.answer, responseMs));
+    return NextResponse.json(await submitAnswer(u.id, stage, body.token, body.answer, responseMs, hintsUsed));
   } catch (e) {
     if (e instanceof EngineError) {
       return NextResponse.json({ error: { code: e.code, message: e.code } }, { status: e.status });
