@@ -72,4 +72,4 @@ Young Learners is an adaptive, gamified learning platform built for K-8 students
    ```bash
    npm run dev
    ```
-   Open [http://localhost:3000](http://localhost:3000) in your browser to view the application.
+   Open https://younglearners.vercel.app/ in your browser to view the application.
