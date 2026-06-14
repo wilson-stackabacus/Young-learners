@@ -182,8 +182,8 @@ in `.env.example`. Push to Vercel via `vercel env add <NAME> production` → `ve
 - **D** — **dragon-battle** boss re-skin (reacting dragon, HP bar, victory + confetti), **count-up** XP/streak counters, **celebration toasts**.
 - Also: title → **"Young Learners 4"**, first-visit **intro dialog**, **map route accepts all 4 subjects** (reading/science were falling back to math), **browser caching** of map/me/leaderboard.
 
-### ⚠️ Pending before next deploy
-- **Turso needs `Attempt.responseMs`** (nullable INTEGER). Local dev.db has it; Turso does **not** yet (the direct ALTER was intentionally not auto-run against prod). Apply it once before deploying Phase C/D, e.g. `ALTER TABLE "Attempt" ADD COLUMN "responseMs" INTEGER;` via `@libsql/client` or the Turso console. Everything else (SubjectProgress, isGuest, placementDone) already exists in Turso.
+### Deploy readiness
+- Turso schema is **up to date**: `Attempt.responseMs` was applied (`ALTER TABLE "Attempt" ADD COLUMN "responseMs" INTEGER`, 2026-06-14), and `SubjectProgress`, `isGuest`, `placementDone` already existed. No pending migrations — Phase C/D are safe to deploy.
 
 ### ⚠️ Security
 Secrets were pasted in chat during setup (Turso token, Gemini key, Firebase web config). The web config is fine to expose; **rotate the Turso token + Gemini key**, and never commit the service-account private key (keep it in the gitignored `.env`).
