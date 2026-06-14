@@ -88,6 +88,27 @@ export interface MapResponse {
   worlds: WorldMeta[];
   levels: LevelState[];   // all stages for `subject`
   subject?: Subject;      // which track this map is for (default "math")
+  placementDone?: boolean; // has the learner taken (or skipped) this subject's placement test
+}
+
+// ── Placement test ──
+export interface PlacementProbe {
+  subject: Subject;
+  level: number;          // which integer level this question probes
+  maxLevel: number;       // highest level in this subject
+  problem: Problem;
+}
+export interface PlacementResult {
+  correct: boolean;
+  done: boolean;          // true when the test is finished and placement applied
+  subject: Subject;
+  level: number;
+  maxLevel: number;
+  nextLevel?: number;     // present when correct && !done — fetch this probe next
+  placedStage?: number;   // present when done — the stage the learner starts at
+  placedLevel?: number;
+  clearedStages?: number; // how many stages were auto-completed
+  xpAwarded?: number;
 }
 
 export type ProblemInputType =

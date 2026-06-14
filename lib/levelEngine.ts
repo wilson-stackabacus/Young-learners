@@ -140,7 +140,7 @@ export async function getMap(userId: string, subject: Subject = "math"): Promise
     return { ...toLevelInfo(l), status, progress: r?.progress ?? 0, stars: r?.stars ?? 0 };
   });
 
-  return { user: toSummary(user, sp), worlds: worldMeta(subject), levels, subject };
+  return { user: toSummary(user, sp), worlds: worldMeta(subject), levels, subject, placementDone: sp.placementDone };
 }
 
 // ─── Problem generation ──────────────────────────────────────────────────────
@@ -512,4 +512,89 @@ async function evaluateAndAwardBadges(tx: DB, userId: string): Promise<NewBadge[
   if (earned.length === 0) return [];
   await tx.userBadge.createMany({ data: earned.map((b) => ({ userId, badgeId: b.badgeId })) });
   return earned;
+}
+
+// ─── Placement test ──────────────────────────────────────────────────────────
+// One probe question per integer level, ascending. Each correct answer means
+// the learner has that level down; the first miss (or acing the top) places
+// them — every stage below the placement point is auto-cleared to 3★ with XP,
+// and SubjectProgress.placementDone is set so we never re-ask.
+
+const PLACEMENT_XP_PER_STAGE = 8;
+
+function maxLevelOf(subject: Subject): number {
+  return catalogForSubject(subject).reduce((m, c) => (Number.isInteger(c.difficulty) && c.difficulty > m ? c.difficulty : m), 1);
+}
+function probeStageFor(subject: Subject, level: number): number {
+  const tier = level * 2 - 1; // the pure tier for integer difficulty `level`
+  const lvl = catalogForSubject(subject).find((c) => c.tier === tier && c.stageInTier === 1);
+  return lvl?.stage ?? firstStageOf(subject);
+}
+
+export async function placementProbe(userId: string, subject: Subject, level: number) {
+  const maxLevel = maxLevelOf(subject);
+  const lvl = Math.min(Math.max(1, Math.floor(level || 1)), maxLevel);
+  const problem = await createPending(prisma, userId, probeStageFor(subject, lvl), false);
+  return { subject, level: lvl, maxLevel, problem };
+}
+
+export async function placementSkip(userId: string, subject: Subject): Promise<void> {
+  await getSubjectProgress(prisma, userId, subject); // ensure the row exists
+  await prisma.subjectProgress.update({
+    where: { userId_subject: { userId, subject } },
+    data: { placementDone: true },
+  });
+  await prisma.pendingProblem.deleteMany({ where: { userId } });
+}
+
+export async function placementSubmit(userId: string, subject: Subject, level: number, token: string, answer: string) {
+  const maxLevel = maxLevelOf(subject);
+  const pending = await prisma.pendingProblem.findUnique({ where: { token } });
+  if (!pending || pending.userId !== userId) throw new EngineError("invalid_token", 409);
+  // Trust the question, not the client: derive the probed level from the
+  // pending problem's stage so the reported `level` can't be spoofed.
+  const cat = levelForStage(pending.stage);
+  const lvl = cat && Number.isInteger(cat.difficulty) ? cat.difficulty : Math.min(Math.max(1, Math.floor(level || 1)), maxLevel);
+  const correct = checkAnswer(pending.inputType as ProblemInputType, pending.answer, answer, JSON.parse(pending.commonMistakes)).correct;
+  await prisma.pendingProblem.deleteMany({ where: { userId } });
+
+  if (correct && lvl < maxLevel) {
+    return { correct: true, done: false, subject, level: lvl, maxLevel, nextLevel: lvl + 1 };
+  }
+  // A miss → start AT this level; acing the top → start at the top level.
+  const placedLevel = correct ? maxLevel : lvl;
+  const fin = await finalizePlacement(userId, subject, placedLevel);
+  return { correct, done: true, subject, level: lvl, maxLevel, ...fin };
+}
+
+async function finalizePlacement(userId: string, subject: Subject, placedLevel: number) {
+  const placedStage = probeStageFor(subject, placedLevel);
+  const toClear = catalogForSubject(subject).filter((c) => c.difficulty < placedLevel);
+  const xpAwarded = toClear.length * PLACEMENT_XP_PER_STAGE;
+  const now = new Date();
+
+  await prisma.$transaction(
+    async (tx) => {
+      await getSubjectProgress(tx, userId, subject); // ensure the sp row exists
+      const stages = [...toClear.map((c) => c.stage), placedStage];
+      await tx.levelProgress.deleteMany({ where: { userId, stage: { in: stages } } });
+      await tx.levelProgress.createMany({
+        data: [
+          ...toClear.map((c) => ({
+            userId, stage: c.stage, status: "cleared", progress: 100, stars: 3,
+            totalCorrect: 1, totalAttempts: 1, recentResults: "[true]", clearedAt: now,
+          })),
+          { userId, stage: placedStage, status: "current", progress: 0, stars: 0 },
+        ],
+      });
+      await tx.subjectProgress.update({
+        where: { userId_subject: { userId, subject } },
+        data: { currentStage: placedStage, totalXp: { increment: xpAwarded }, placementDone: true },
+      });
+      await tx.user.update({ where: { id: userId }, data: { totalXp: { increment: xpAwarded } } });
+    },
+    { timeout: 20000, maxWait: 10000 },
+  );
+
+  return { placedStage, placedLevel, clearedStages: toClear.length, xpAwarded };
 }

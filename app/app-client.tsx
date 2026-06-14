@@ -8,6 +8,8 @@ import type {
   LevelInfo,
   LevelState,
   MapResponse,
+  PlacementProbe,
+  PlacementResult,
   Problem,
   Stats,
   Subject,
@@ -65,6 +67,11 @@ export default function AppClient() {
   const [me, setMe] = useState<UserSummary | null>(null);
   const [map, setMap] = useState<MapResponse | null>(null);
   const [board, setBoard] = useState<LeaderboardResp | null>(null);
+
+  // placement test state
+  const [placementProb, setPlacementProb] = useState<PlacementProbe | null>(null);
+  const [placementResult, setPlacementResult] = useState<PlacementResult | null>(null);
+  const [placementBusy, setPlacementBusy] = useState(false);
 
   // play state
   const [view, setView] = useState<"map" | "play">("map");
@@ -138,6 +145,7 @@ export default function AppClient() {
   useEffect(() => {
     loadMap(subject).catch(console.error);
     setView("map");
+    setPlacementProb(null); setPlacementResult(null);
   }, [subject, loadMap]);
 
   useEffect(() => {
@@ -187,6 +195,38 @@ export default function AppClient() {
 
   // Force-refresh on return from play — XP / stars / stage just changed.
   const backToMap = useCallback(async () => { await loadMap(subject, true); setView("map"); }, [loadMap, subject]);
+
+  // ── placement test ──
+  const startPlacement = useCallback(async () => {
+    setPlacementBusy(true); setPlacementResult(null);
+    try { setPlacementProb(await api<PlacementProbe>(`/api/placement?subject=${subject}&level=1`)); }
+    catch (e) { console.error(e); } finally { setPlacementBusy(false); }
+  }, [api, subject]);
+
+  const answerPlacement = useCallback(async (answer: string) => {
+    if (!placementProb || placementBusy || !answer.trim()) return;
+    setPlacementBusy(true);
+    try {
+      const res = await api<PlacementResult>("/api/placement", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject, level: placementProb.level, token: placementProb.problem.token, answer }),
+      });
+      if (res.done) { setPlacementProb(null); setPlacementResult(res); }
+      else { setPlacementProb(await api<PlacementProbe>(`/api/placement?subject=${subject}&level=${res.nextLevel}`)); }
+    } catch (e) { console.error(e); } finally { setPlacementBusy(false); }
+  }, [api, subject, placementProb, placementBusy]);
+
+  const skipPlacement = useCallback(async () => {
+    setPlacementBusy(true);
+    try { await api("/api/placement", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, action: "skip" }) }); }
+    catch (e) { console.error(e); }
+    finally { setPlacementProb(null); setPlacementResult(null); setPlacementBusy(false); await loadMap(subject, true); }
+  }, [api, subject, loadMap]);
+
+  const finishPlacement = useCallback(async () => {
+    setPlacementProb(null); setPlacementResult(null);
+    await loadMap(subject, true);
+  }, [loadMap, subject]);
 
   // ── intro + login ──
   // First visit → show the welcome/intro dialog (which then leads into login).
@@ -268,14 +308,22 @@ export default function AppClient() {
       {!map ? (
         <div style={{ ...glass, padding: 40, textAlign: "center", color: "#94a3b8" }}>Loading…</div>
       ) : tab === "game" ? (
-        view === "play" && level && problem ? (
+        placementProb || placementResult ? (
+          <PlacementView
+            subject={subject} prob={placementProb} result={placementResult} busy={placementBusy}
+            onAnswer={answerPlacement} onSkip={skipPlacement} onDone={finishPlacement}
+          />
+        ) : view === "play" && level && problem ? (
           <PlayView
             level={level} problem={problem} stats={stats} boss={boss} input={input} setInput={setInput}
             feedback={feedback} attemptsRemaining={attemptsRemaining} lastGain={lastGain} busy={busy}
             onSubmit={submit} onNext={next} onBack={backToMap}
           />
         ) : (
-          <GameMap map={map} subject={subject} onOpen={openLevel} />
+          <>
+            {map.placementDone === false && <PlacementBanner busy={placementBusy} onStart={startPlacement} onSkip={skipPlacement} />}
+            <GameMap map={map} subject={subject} onOpen={openLevel} />
+          </>
         )
       ) : tab === "progress" ? (
         <Progress me={me} map={map} subject={subject} />
@@ -541,6 +589,79 @@ function Leaderboard({ board, meId, subject, onSignUp }: { board: LeaderboardRes
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── Placement test ──
+function PlacementBanner({ busy, onStart, onSkip }: { busy: boolean; onStart: () => void; onSkip: () => void }) {
+  return (
+    <div style={{ ...glass, padding: "14px 18px", marginBottom: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", borderColor: `${ACCENT}55` }}>
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ fontWeight: 700 }}>New here? Take a quick placement check.</div>
+        <div style={{ fontSize: 13, color: "#94a3b8" }}>A few questions to start you at the right level — or skip and begin from the top.</div>
+      </div>
+      <button onClick={onStart} disabled={busy} style={loginBtn}>Take placement</button>
+      <button onClick={onSkip} disabled={busy} style={ghostBtn}>Skip</button>
+    </div>
+  );
+}
+
+function PlacementView({ subject, prob, result, busy, onAnswer, onSkip, onDone }: {
+  subject: Subject; prob: PlacementProbe | null; result: PlacementResult | null; busy: boolean;
+  onAnswer: (a: string) => void; onSkip: () => void; onDone: () => void;
+}) {
+  const [input, setInput] = useState("");
+  const token = prob?.problem.token;
+  useEffect(() => { setInput(""); }, [token]);
+
+  if (result) {
+    return (
+      <div style={{ ...glass, padding: 28, textAlign: "center" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: CYAN, letterSpacing: 1, textTransform: "uppercase" }}>Placement complete</div>
+        <h2 style={{ margin: "8px 0 6px", fontSize: 24 }}>You&apos;re starting at Level {result.placedLevel}</h2>
+        <p style={{ color: "#94a3b8", margin: "0 0 18px", fontSize: 14 }}>
+          {result.clearedStages ? <>We cleared <b style={{ color: "#e2e8f0" }}>{result.clearedStages}</b> {cap(subject)} levels you&apos;ve already mastered{result.xpAwarded ? <> and banked <b style={{ color: "#e2e8f0" }}>+{result.xpAwarded} XP</b></> : null}.</> : <>We&apos;ll start you from the beginning — let&apos;s build it up!</>}
+        </p>
+        <button onClick={onDone} style={{ ...primaryBtn, minWidth: 180 }}>Start playing →</button>
+      </div>
+    );
+  }
+  if (!prob) return <div style={{ ...glass, padding: 30, textAlign: "center", color: "#94a3b8" }}>Starting placement…</div>;
+
+  const p = prob.problem;
+  const pct = Math.round(((prob.level - 1) / Math.max(1, prob.maxLevel)) * 100);
+  return (
+    <div style={{ ...glass, padding: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ ...pill, background: CYAN, color: "#06281c" }}>PLACEMENT</span>
+        <h2 style={{ margin: 0, fontSize: 17 }}>{cap(subject)} · Level {prob.level} of {prob.maxLevel}</h2>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#94a3b8", marginTop: 14 }}>
+        <span>Finding your level…</span><span>{pct}%</span>
+      </div>
+      <div style={barOuter}><div style={{ ...barInner, width: `${pct}%` }} /></div>
+
+      <div style={{ fontSize: 26, fontWeight: 700, textAlign: "center", margin: "26px 0 22px" }}>{p.prompt}</div>
+
+      {p.inputType === "multiple-choice" && p.choices ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {p.choices.map((c) => (
+            <button key={c.id} disabled={busy} onClick={() => onAnswer(c.id)} style={choiceBtn}>{c.label}</button>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onAnswer(input)}
+            placeholder={p.inputType === "fraction" ? "e.g. 5/6" : "Your answer"} disabled={busy} autoFocus style={inputBox} />
+          <button onClick={() => onAnswer(input)} disabled={busy} style={primaryBtn}>Submit</button>
+        </div>
+      )}
+
+      <p style={{ fontSize: 12, color: "#64748b", marginTop: 14, textAlign: "center" }}>
+        Answer as many as you can — we stop when it gets too tricky.{" "}
+        <button onClick={onSkip} disabled={busy} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>Skip placement</button>
+      </p>
     </div>
   );
 }
