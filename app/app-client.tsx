@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type {
   AnswerResponse,
@@ -86,6 +86,13 @@ export default function AppClient() {
   const [attemptsRemaining, setAttemptsRemaining] = useState(2);
   const [lastGain, setLastGain] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [toasts, setToasts] = useState<{ id: number; text: string; tone: string }[]>([]);
+
+  const pushToast = useCallback((text: string, tone: string = CYAN) => {
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t, { id, text, tone }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2500);
+  }, []);
 
   // intro + login dialogs
   const [introOpen, setIntroOpen] = useState(false);
@@ -184,9 +191,14 @@ export default function AppClient() {
       } else {
         setFeedback({ kind: res.state === "solved" ? "correct" : "revealed", solution: res.solution });
         setPendingNext(res.nextProblem ?? null); setAdvanceStage(res.advanced?.toStage ?? null); setLastGain(res.stats.xpGained);
+        if (res.state === "solved") {
+          if (res.stats.xpGained > 0) pushToast(`+${res.stats.xpGained} XP`, "#34d399");
+          if (res.boss?.defeated) pushToast("Dragon defeated! 🐉", "#fbbf24");
+          else if (res.advanced) pushToast("Level cleared! 🎉", "#fbbf24");
+        }
       }
     } catch (e) { console.error(e); } finally { setBusy(false); }
-  }, [api, problem, busy]);
+  }, [api, problem, busy, pushToast]);
 
   const next = useCallback(() => {
     if (advanceStage) { void openLevel(advanceStage); return; }
@@ -272,6 +284,8 @@ export default function AppClient() {
 
   return (
     <div style={{ padding: "12px 28px 60px", color: "#e2e8f0" }}>
+      <GameStyles />
+      <Toaster toasts={toasts} />
       {/* ── Top bar ── */}
       <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>Young Learners 4</div>
@@ -281,8 +295,8 @@ export default function AppClient() {
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, marginLeft: "auto", alignItems: "center" }}>
-          <span style={chip}>⭐ {(me?.totalXp ?? 0).toLocaleString()} XP</span>
-          <span style={chip}>🔥 {me?.streakDays ?? 0}</span>
+          <span style={chip}>⭐ <CountUp value={me?.totalXp ?? 0} /> XP</span>
+          <span style={chip}>🔥 <CountUp value={me?.streakDays ?? 0} /></span>
           {authUser ? (
             <button onClick={doLogout} style={loginBtn} title="Log out">{authUser.name.split(" ")[0]} · Log out</button>
           ) : guestId ? (
@@ -440,6 +454,108 @@ function MapNode({ level, index, onOpen }: { level: LevelState; index: number; o
   );
 }
 
+// ── Dragon battle (boss re-skin) ──
+function DragonBattle({ boss }: { boss: BossState }) {
+  const [fx, setFx] = useState<"idle" | "hit" | "attack" | "victory">("idle");
+  const prev = useRef({ hp: boss.hp, hearts: boss.hearts });
+  useEffect(() => {
+    const p = prev.current;
+    let next: typeof fx = "idle";
+    if (boss.defeated) next = "victory";
+    else if (boss.hp < p.hp) next = "hit";
+    else if (boss.hearts < p.hearts) next = "attack";
+    prev.current = { hp: boss.hp, hearts: boss.hearts };
+    if (next === "idle") return;
+    setFx(next);
+    if (next === "victory") return;
+    const t = setTimeout(() => setFx("idle"), 520);
+    return () => clearTimeout(t);
+  }, [boss.hp, boss.hearts, boss.defeated]);
+
+  const hpPct = Math.max(0, (boss.hp / boss.maxHp) * 100);
+  const anim =
+    fx === "hit" ? "yl-hit .5s" : fx === "attack" ? "yl-attack .5s" : fx === "victory" ? "yl-victory 1s forwards" : "yl-float 2.6s ease-in-out infinite";
+  return (
+    <div style={{ marginTop: 14, position: "relative" }}>
+      {fx === "victory" && <Confetti />}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 60, lineHeight: 1, animation: anim, filter: fx === "hit" ? "drop-shadow(0 0 12px #ef4444) saturate(1.8)" : "none" }}>🐉</div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#94a3b8" }}>
+        <span>Dragon HP</span>
+        <span>{"❤️".repeat(boss.hearts)}{"🤍".repeat(Math.max(0, boss.maxHearts - boss.hearts))}</span>
+      </div>
+      <div style={barOuter}><div style={{ ...barInner, width: `${hpPct}%`, background: "linear-gradient(90deg,#f87171,#ef4444)", transition: "width .4s" }} /></div>
+      {boss.defeated && <div style={{ textAlign: "center", marginTop: 8, fontWeight: 800, color: "#fbbf24", animation: "yl-pop .4s" }}>Dragon defeated! 🎉</div>}
+      {boss.failed && <div style={{ textAlign: "center", marginTop: 8, fontWeight: 700, color: "#f87171" }}>The dragon roars back — regroup and try again!</div>}
+    </div>
+  );
+}
+
+function Confetti() {
+  const pieces = useMemo(() => {
+    const colors = [ACCENT, CYAN, "#fbbf24", "#34d399", "#f87171"];
+    return Array.from({ length: 40 }, (_, i) => ({
+      left: Math.random() * 100, delay: Math.random() * 0.5, dur: 1.2 + Math.random() * 1.3,
+      color: colors[i % colors.length], size: 6 + Math.random() * 7,
+    }));
+  }, []);
+  return (
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 5 }}>
+      {pieces.map((p, i) => (
+        <div key={i} style={{ position: "absolute", top: -12, left: `${p.left}%`, width: p.size, height: p.size, background: p.color, borderRadius: 2, animation: `yl-confetti ${p.dur}s ${p.delay}s ease-in forwards` }} />
+      ))}
+    </div>
+  );
+}
+
+// Smoothly counts the displayed number up/down when `value` changes.
+function CountUp({ value, style }: { value: number; style?: CSSProperties }) {
+  const [display, setDisplay] = useState(value);
+  const prev = useRef(value);
+  useEffect(() => {
+    const from = prev.current, to = value;
+    prev.current = to;
+    if (from === to) { setDisplay(to); return; }
+    const start = performance.now(), dur = 650;
+    let raf = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / dur);
+      setDisplay(Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return <span style={style}>{display.toLocaleString()}</span>;
+}
+
+// Celebration toasts (XP gains, level-ups, streaks).
+function Toaster({ toasts }: { toasts: { id: number; text: string; tone: string }[] }) {
+  return (
+    <div style={{ position: "fixed", top: 12, left: 0, right: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, zIndex: 60, pointerEvents: "none" }}>
+      {toasts.map((t) => (
+        <div key={t.id} style={{ ...glass, padding: "8px 16px", fontWeight: 800, fontSize: 14, color: t.tone, border: `1px solid ${t.tone}55`, animation: "yl-toastin .3s ease" }}>{t.text}</div>
+      ))}
+    </div>
+  );
+}
+
+// Injected once: all gameplay keyframes.
+function GameStyles() {
+  return (
+    <style>{`
+@keyframes yl-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+@keyframes yl-hit { 0%{transform:translateX(0)} 20%{transform:translateX(-8px) rotate(-7deg)} 40%{transform:translateX(8px) rotate(7deg)} 60%{transform:translateX(-6px)} 80%{transform:translateX(4px)} 100%{transform:translateX(0)} }
+@keyframes yl-attack { 0%{transform:scale(1) translateY(0)} 45%{transform:scale(1.28) translateY(8px)} 100%{transform:scale(1) translateY(0)} }
+@keyframes yl-victory { 0%{transform:scale(1) rotate(0);opacity:1} 55%{transform:scale(1.12) rotate(10deg)} 100%{transform:scale(.55) rotate(45deg) translateY(34px);opacity:.15} }
+@keyframes yl-confetti { 0%{transform:translateY(0) rotate(0);opacity:1} 100%{transform:translateY(340px) rotate(420deg);opacity:0} }
+@keyframes yl-pop { 0%{transform:scale(.6);opacity:0} 100%{transform:scale(1);opacity:1} }
+@keyframes yl-toastin { 0%{transform:translateY(-12px);opacity:0} 100%{transform:translateY(0);opacity:1} }
+`}</style>
+  );
+}
+
 // ── Play ──
 function PlayView(props: {
   level: LevelInfo; problem: Problem; stats: Stats | null; boss: BossState | null;
@@ -462,12 +578,7 @@ function PlayView(props: {
         </div>
 
         {boss ? (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#94a3b8" }}>
-              <span>👾 Boss HP</span><span>{"❤️".repeat(boss.hearts)}{"🤍".repeat(boss.maxHearts - boss.hearts)}</span>
-            </div>
-            <div style={barOuter}><div style={{ ...barInner, width: `${(boss.hp / boss.maxHp) * 100}%`, background: "linear-gradient(90deg,#f87171,#ef4444)" }} /></div>
-          </div>
+          <DragonBattle boss={boss} />
         ) : stats ? (
           <div style={{ marginTop: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#94a3b8" }}>
