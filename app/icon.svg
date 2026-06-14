@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="108" fill="#09090e"/>
+  <!-- Y left arm -->
+  <polygon fill="#7c5cff" points="108,82 186,82 286,256 210,256"/>
+  <!-- Y right arm -->
+  <polygon fill="#7c5cff" points="326,82 404,82 302,256 226,256"/>
+  <!-- Y stem + L vertical -->
+  <rect fill="#7c5cff" x="210" y="240" width="92" height="192"/>
+  <!-- L horizontal bar -->
+  <rect fill="#7c5cff" x="302" y="364" width="118" height="68"/>
+</svg>

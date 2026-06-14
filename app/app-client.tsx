@@ -145,25 +145,34 @@ export default function AppClient() {
   const backToMap = useCallback(async () => { await loadMap(subject); setView("map"); }, [loadMap, subject]);
 
   // ── login ──
+  useEffect(() => {
+    if (!localStorage.getItem("yl_has_visited")) setLoginOpen(true);
+  }, []);
+
+  const closeLogin = useCallback(() => {
+    localStorage.setItem("yl_has_visited", "1");
+    setLoginOpen(false);
+  }, []);
+
   const doEmail = async () => {
     setLoginBusy(true); setLoginErr(null);
-    try { await emailSignIn(email, pw); setLoginOpen(false); }
+    try { await emailSignIn(email, pw); closeLogin(); }
     catch (e) { setLoginErr(e instanceof Error ? e.message : "Sign-in failed"); }
     finally { setLoginBusy(false); }
   };
   const doGoogle = async () => {
     setLoginBusy(true); setLoginErr(null);
-    try { await googleSignIn(); setLoginOpen(false); }
+    try { await googleSignIn(); closeLogin(); }
     catch (e) { setLoginErr(e instanceof Error ? e.message : "Sign-in failed"); }
     finally { setLoginBusy(false); }
   };
   const doLogout = async () => { await logout(); tokenRef.current = null; setAuthUser(null); loadMap(subject).catch(console.error); };
 
   return (
-    <div style={{ maxWidth: 920, margin: "0 auto", padding: "8px 4px 60px", color: "#e2e8f0" }}>
+    <div style={{ padding: "12px 28px 60px", color: "#e2e8f0" }}>
       {/* ── Top bar ── */}
       <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>🎯 Young Learners</div>
+        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>Young Learners</div>
         <div style={{ ...seg, marginLeft: 8 }}>
           {(["math", "english", "reading", "science"] as Subject[]).map((s) => (
             <button key={s} onClick={() => setSubject(s)} style={segBtn(subject === s)}>{s.charAt(0).toUpperCase() + s.slice(1)}</button>
@@ -210,7 +219,7 @@ export default function AppClient() {
       {loginOpen && (
         <LoginDialog
           email={email} setEmail={setEmail} pw={pw} setPw={setPw} err={loginErr} busy={loginBusy}
-          onEmail={doEmail} onGoogle={doGoogle} onClose={() => setLoginOpen(false)}
+          onEmail={doEmail} onGoogle={doGoogle} onClose={closeLogin}
         />
       )}
     </div>
@@ -242,7 +251,7 @@ function GameMap({ map, subject, onOpen }: { map: MapResponse; subject: Subject;
         {map.levels.length} levels · tap your 🟢 current or any cleared 🟡 level. Scroll sideways →
       </p>
       <div style={{ ...glass, overflowX: "auto", overflowY: "hidden", padding: "6px 0" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", height: 220, paddingRight: 30 }}>{nodes}</div>
+        <div style={{ display: "flex", alignItems: "flex-start", height: 300, paddingRight: 30 }}>{nodes}</div>
       </div>
     </div>
   );
@@ -253,7 +262,7 @@ function MapNode({ level, index, onOpen }: { level: LevelState; index: number; o
   const top = 78 + Math.sin(index * 0.55) * 46;
   const clickable = level.status !== "locked";
   return (
-    <div style={{ width: 60, height: 200, position: "relative", flex: "0 0 auto" }}>
+    <div style={{ width: 70, height: 280, position: "relative", flex: "0 0 auto" }}>
       <button
         onClick={() => clickable && onOpen(level.stage)} disabled={!clickable}
         title={`Stage ${displayStage(level.stage)} · ${level.skillNames.join(" + ")}`}
@@ -417,7 +426,7 @@ function LoginDialog(props: {
     <div onClick={props.onClose} style={{ position: "fixed", inset: 0, background: "rgba(2,4,10,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ ...glass, width: 360, maxWidth: "100%", padding: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h2 style={{ margin: 0, fontSize: 19 }}>Log in</h2>
+          <h2 style={{ margin: 0, fontSize: 19 }}>Log in with Google or Email</h2>
           <button onClick={props.onClose} style={{ ...ghostBtn, padding: "2px 10px" }}>✕</button>
         </div>
         {!configured && (
