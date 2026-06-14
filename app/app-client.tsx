@@ -16,11 +16,12 @@ import type {
 import { emailSignIn, googleSignIn, isFirebaseConfigured, logout, watchAuth } from "@/lib/firebaseClient";
 
 type Tab = "game" | "progress" | "leaderboard";
-interface Leader { id: string; username: string; displayName: string; totalXp: number; currentStreak: number }
-interface LeaderboardResp { leaderboard: Leader[]; currentUserRank: number | null }
+interface Leader { rank: number; id: string; username: string; displayName: string; totalXp: number; currentStreak: number; currentStage: number }
+interface LeaderboardResp { subject: Subject; leaderboard: Leader[]; currentUserRank: number | null; isGuest: boolean }
 
 const ACCENT = "#7c5cff";
 const CYAN = "#22d3ee";
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const glass: CSSProperties = {
   background: "rgba(19,23,34,0.55)",
   border: "1px solid rgba(255,255,255,0.08)",
@@ -42,7 +43,9 @@ const levelTitle = (l: LevelInfo) =>
 
 export default function AppClient() {
   const tokenRef = useRef<string | null>(null);
+  const guestRef = useRef<string | null>(null);
   const [authUser, setAuthUser] = useState<{ name: string; token: string } | null>(null);
+  const [guestId, setGuestId] = useState<string | null>(null);
   const [subject, setSubject] = useState<Subject>("math");
   const [tab, setTab] = useState<Tab>("game");
 
@@ -74,6 +77,7 @@ export default function AppClient() {
   const api = useCallback(async <T,>(path: string, opts: RequestInit = {}): Promise<T> => {
     const headers: Record<string, string> = { ...(opts.headers as Record<string, string>) };
     if (tokenRef.current) headers["Authorization"] = "Bearer " + tokenRef.current;
+    else if (guestRef.current) headers["X-Guest-Id"] = guestRef.current;
     const r = await fetch(path, { cache: "no-store", ...opts, headers });
     if (!r.ok) throw new Error(`${path} → ${r.status}`);
     return r.json() as Promise<T>;
@@ -90,6 +94,10 @@ export default function AppClient() {
 
   // auth subscription
   useEffect(() => {
+    // Restore a prior guest session (so a refresh keeps the same guest row)
+    // before we start listening — api() then attaches the X-Guest-Id header.
+    const stored = typeof window !== "undefined" ? sessionStorage.getItem("ql.guestId") : null;
+    if (stored) { guestRef.current = stored; setGuestId(stored); }
     const unsub = watchAuth((u) => {
       tokenRef.current = u?.token ?? null;
       setAuthUser(u);
@@ -105,8 +113,11 @@ export default function AppClient() {
   }, [subject, loadMap]);
 
   useEffect(() => {
-    if (tab === "leaderboard") api<LeaderboardResp>("/api/leaderboard").then(setBoard).catch(console.error);
-  }, [tab, api]);
+    if (tab === "leaderboard") {
+      setBoard(null);
+      api<LeaderboardResp>(`/api/leaderboard?subject=${subject}`).then(setBoard).catch(console.error);
+    }
+  }, [tab, subject, api]);
 
   // ── game actions ──
   const openLevel = useCallback(async (stage: number) => {
@@ -158,6 +169,17 @@ export default function AppClient() {
     finally { setLoginBusy(false); }
   };
   const doLogout = async () => { await logout(); tokenRef.current = null; setAuthUser(null); loadMap(subject).catch(console.error); };
+  const continueAsGuest = async () => {
+    setLoginBusy(true); setLoginErr(null);
+    try {
+      const g = await api<{ id: string }>("/api/guest", { method: "POST" });
+      guestRef.current = g.id; setGuestId(g.id);
+      if (typeof window !== "undefined") sessionStorage.setItem("ql.guestId", g.id);
+      setLoginOpen(false);
+      await loadMap(subject);
+    } catch (e) { setLoginErr(e instanceof Error ? e.message : "Could not start guest session"); }
+    finally { setLoginBusy(false); }
+  };
 
   return (
     <div style={{ maxWidth: 920, margin: "0 auto", padding: "8px 4px 60px", color: "#e2e8f0" }}>
@@ -166,7 +188,7 @@ export default function AppClient() {
         <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>🎯 Young Learners</div>
         <div style={{ ...seg, marginLeft: 8 }}>
           {(["math", "english", "reading", "science"] as Subject[]).map((s) => (
-            <button key={s} onClick={() => setSubject(s)} style={segBtn(subject === s)}>{s.charAt(0).toUpperCase() + s.slice(1)}</button>
+            <button key={s} onClick={() => setSubject(s)} style={segBtn(subject === s)}>{cap(s)}</button>
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, marginLeft: "auto", alignItems: "center" }}>
@@ -174,6 +196,11 @@ export default function AppClient() {
           <span style={chip}>🔥 {me?.streakDays ?? 0}</span>
           {authUser ? (
             <button onClick={doLogout} style={loginBtn} title="Log out">{authUser.name.split(" ")[0]} · Log out</button>
+          ) : guestId ? (
+            <>
+              <span style={{ ...chip, color: CYAN, borderColor: `${CYAN}55` }}>👤 Guest</span>
+              <button onClick={() => setLoginOpen(true)} style={loginBtn}>Sign up</button>
+            </>
           ) : (
             <button onClick={() => setLoginOpen(true)} style={loginBtn}>Log in</button>
           )}
@@ -204,13 +231,13 @@ export default function AppClient() {
       ) : tab === "progress" ? (
         <Progress me={me} map={map} subject={subject} />
       ) : (
-        <Leaderboard board={board} meId={me?.id} />
+        <Leaderboard board={board} meId={me?.id} subject={subject} onSignUp={() => setLoginOpen(true)} />
       )}
 
       {loginOpen && (
         <LoginDialog
           email={email} setEmail={setEmail} pw={pw} setPw={setPw} err={loginErr} busy={loginBusy}
-          onEmail={doEmail} onGoogle={doGoogle} onClose={() => setLoginOpen(false)}
+          onEmail={doEmail} onGoogle={doGoogle} onGuest={continueAsGuest} onClose={() => setLoginOpen(false)}
         />
       )}
     </div>
@@ -360,7 +387,7 @@ function Progress({ me, map, subject }: { me: UserSummary | null; map: MapRespon
   const cards = [
     { label: "Total XP", value: (me?.totalXp ?? 0).toLocaleString() },
     { label: "Day streak", value: me?.streakDays ?? 0 },
-    { label: `${subject.charAt(0).toUpperCase() + subject.slice(1)} stage`, value: `${cur} / ${total}` },
+    { label: `${cap(subject)} stage`, value: `${cur} / ${total}` },
     { label: "Levels cleared", value: cleared },
     { label: "Stars earned", value: stars },
   ];
@@ -376,7 +403,7 @@ function Progress({ me, map, subject }: { me: UserSummary | null; map: MapRespon
       </div>
       <div style={{ ...glass, padding: 18, marginTop: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#94a3b8", marginBottom: 6 }}>
-          <span>{subject.charAt(0).toUpperCase() + subject.slice(1)} ladder</span><span>{cleared} / {total} cleared</span>
+          <span>{cap(subject)} ladder</span><span>{cleared} / {total} cleared</span>
         </div>
         <div style={barOuter}><div style={{ ...barInner, width: `${total ? (cleared / total) * 100 : 0}%` }} /></div>
       </div>
@@ -385,24 +412,47 @@ function Progress({ me, map, subject }: { me: UserSummary | null; map: MapRespon
 }
 
 // ── Leaderboard ──
-function Leaderboard({ board, meId }: { board: LeaderboardResp | null; meId?: string }) {
+function Leaderboard({ board, meId, subject, onSignUp }: { board: LeaderboardResp | null; meId?: string; subject: Subject; onSignUp: () => void }) {
   if (!board) return <div style={{ ...glass, padding: 30, textAlign: "center", color: "#94a3b8" }}>Loading…</div>;
+  const subj = cap(subject);
   return (
-    <div style={{ ...glass, padding: 8 }}>
-      {board.leaderboard.map((u, i) => {
-        const isMe = u.id === meId;
-        return (
-          <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, background: isMe ? `${ACCENT}22` : "transparent" }}>
-            <div style={{ width: 28, textAlign: "center", fontWeight: 800, color: i < 3 ? "#f5a623" : "#64748b" }}>{i + 1}</div>
-            <div style={{ width: 30, height: 30, borderRadius: "50%", background: `${CYAN}33`, color: CYAN, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13 }}>
-              {u.displayName.slice(0, 1).toUpperCase()}
-            </div>
-            <div style={{ flex: 1, fontWeight: isMe ? 700 : 500 }}>{u.displayName}{isMe && " (you)"}</div>
-            <div style={{ color: "#94a3b8", fontSize: 13 }}>🔥 {u.currentStreak}</div>
-            <div style={{ fontWeight: 700 }}>{u.totalXp.toLocaleString()} XP</div>
+    <div>
+      {board.isGuest ? (
+        <div style={{ ...glass, padding: "14px 18px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", borderColor: `${CYAN}44` }}>
+          <span style={{ fontSize: 22 }}>🏆</span>
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <div style={{ fontWeight: 700 }}>Sign up to see your rank and save your progress!</div>
+            <div style={{ fontSize: 13, color: "#94a3b8" }}>Guest scores aren&apos;t ranked on the {subj} leaderboard.</div>
           </div>
-        );
-      })}
+          <button onClick={onSignUp} style={loginBtn}>Sign up</button>
+        </div>
+      ) : board.currentUserRank ? (
+        <div style={{ ...glass, padding: "14px 18px", marginBottom: 12, borderColor: `${ACCENT}55`, fontWeight: 700 }}>
+          🎉 You&apos;re <span style={{ color: CYAN }}>#{board.currentUserRank}</span> in {subj}! Keep it up.
+        </div>
+      ) : null}
+
+      <div style={{ ...glass, padding: 8 }}>
+        <div style={{ padding: "6px 14px 10px", fontSize: 12, color: "#64748b", fontWeight: 600 }}>
+          {subj} leaderboard · top {board.leaderboard.length}
+        </div>
+        {board.leaderboard.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: "#94a3b8" }}>No ranked players yet — be the first!</div>
+        ) : board.leaderboard.map((u) => {
+          const isMe = u.id === meId;
+          return (
+            <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, background: isMe ? `${ACCENT}22` : "transparent" }}>
+              <div style={{ width: 28, textAlign: "center", fontWeight: 800, color: u.rank <= 3 ? "#f5a623" : "#64748b" }}>{u.rank}</div>
+              <div style={{ width: 30, height: 30, borderRadius: "50%", background: `${CYAN}33`, color: CYAN, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13 }}>
+                {u.displayName.slice(0, 1).toUpperCase()}
+              </div>
+              <div style={{ flex: 1, fontWeight: isMe ? 700 : 500 }}>{u.displayName}{isMe && " (you)"}</div>
+              <div style={{ color: "#94a3b8", fontSize: 13 }}>🔥 {u.currentStreak}</div>
+              <div style={{ fontWeight: 700 }}>{u.totalXp.toLocaleString()} XP</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -410,7 +460,7 @@ function Leaderboard({ board, meId }: { board: LeaderboardResp | null; meId?: st
 // ── Login dialog ──
 function LoginDialog(props: {
   email: string; setEmail: (s: string) => void; pw: string; setPw: (s: string) => void;
-  err: string | null; busy: boolean; onEmail: () => void; onGoogle: () => void; onClose: () => void;
+  err: string | null; busy: boolean; onEmail: () => void; onGoogle: () => void; onGuest: () => void; onClose: () => void;
 }) {
   const configured = isFirebaseConfigured();
   return (
@@ -435,7 +485,7 @@ function LoginDialog(props: {
            Continue with Google
         </button>
         <div style={{ textAlign: "center" }}>
-          <button onClick={props.onClose} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>
+          <button onClick={props.onGuest} disabled={props.busy} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>
             Continue as guest
           </button>
         </div>

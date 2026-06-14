@@ -14,6 +14,8 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   browserLocalPersistence,
@@ -70,7 +72,15 @@ export async function googleSignIn(): Promise<void> {
   await setPersistence(a, browserLocalPersistence);
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
-  await signInWithPopup(a, provider);
+  try {
+    // Redirect is the primary method — it avoids popup-blocker errors. It
+    // navigates away to Google and returns; getRedirectResult (in watchAuth)
+    // and onAuthStateChanged finalize the sign-in on the way back.
+    await signInWithRedirect(a, provider);
+  } catch {
+    // Environments where redirect isn't available → fall back to a popup.
+    await signInWithPopup(a, provider);
+  }
 }
 
 export async function logout(): Promise<void> {
@@ -83,7 +93,11 @@ export function watchAuth(cb: (user: { name: string; token: string } | null) => 
     cb(null);
     return () => {};
   }
-  return onAuthStateChanged(auth(), async (u: User | null) => {
+  const a = auth();
+  // Finalize a returning redirect sign-in (and surface any error) before we
+  // start listening; onAuthStateChanged then delivers the signed-in user.
+  getRedirectResult(a).catch(() => {});
+  return onAuthStateChanged(a, async (u: User | null) => {
     if (!u) return cb(null);
     const token = await u.getIdToken();
     cb({ name: u.displayName ?? u.email ?? "Learner", token });

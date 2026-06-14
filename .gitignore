@@ -114,3 +114,5 @@ tmp/
 temp/
 .DS_Store
 README.md
+.vercel
+.env*

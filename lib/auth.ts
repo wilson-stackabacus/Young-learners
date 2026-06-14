@@ -73,9 +73,19 @@ export async function resolveUser(req: Request) {
         if (process.env.NODE_ENV !== "production") {
           console.warn("Firebase token verification failed", error);
         }
-        // invalid / expired token → fall through to the demo user
+        // invalid / expired token → fall through
       }
     }
   }
+
+  // 2. Guest session — an isGuest account created via POST /api/guest, sent
+  //    back as the X-Guest-Id header. Guests are excluded from leaderboards.
+  const guestId = req.headers.get("x-guest-id");
+  if (guestId) {
+    const guest = await prisma.user.findUnique({ where: { id: guestId } });
+    if (guest?.isGuest) return guest;
+  }
+
+  // 3. Demo fallback (no auth configured / no guest).
   return getOrCreateDemoUser();
 }
