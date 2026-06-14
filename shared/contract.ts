@@ -41,6 +41,8 @@ export interface LevelInfo {
   isBoss?: boolean;       // true for boss stages
   testsLevel?: number;    // boss only: the whole-level number it gates
   subject?: Subject;      // "math" | "english"
+  grade?: string;         // K-8 grade level (unit-based subjects)
+  standard?: string;      // CA standard code (unit-based subjects)
 }
 
 /** Live state of a boss battle (present on boss stages). */

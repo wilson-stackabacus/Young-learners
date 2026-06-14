@@ -10,7 +10,7 @@
  */
 
 import type { Subject, WorldId } from "@/shared/contract";
-import { ENGLISH_SKILL_NAMES } from "./levels/english/generators";
+import { ENGLISH_UNITS, type LessonUnit } from "./levels/english/units";
 import { READING_SKILL_NAMES } from "./levels/reading/generators";
 import { SCIENCE_SKILL_NAMES } from "./levels/science/generators";
 
@@ -42,6 +42,8 @@ export interface CatalogLevel {
   difficulty: number;
   isBoss: boolean;
   testsLevel?: number;
+  grade?: string;    // K-8 grade level (unit-based subjects)
+  standard?: string; // CA standard code (unit-based subjects)
 }
 
 interface WorldDef {
@@ -58,9 +60,11 @@ const MATH_WORLDS: WorldDef[] = [
 ];
 
 // Non-math subjects reuse the math world ids for theming/colors, with own names.
+// English is a flat K-8 unit ladder grouped into grade-band worlds.
 const ENGLISH_WORLDS: WorldDef[] = [
-  { id: "arithmetic", name: "Beginner words", skillRange: [1, 3] },
-  { id: "integers", name: "Advanced words", skillRange: [4, 6] },
+  { id: "arithmetic", name: "Grades K–2", skillRange: [1, 99] },
+  { id: "integers", name: "Grades 3–5", skillRange: [1, 99] },
+  { id: "pre-algebra", name: "Grades 6–8", skillRange: [1, 99] },
 ];
 const READING_WORLDS: WorldDef[] = [
   { id: "pre-algebra", name: "Beginner reading", skillRange: [1, 3] },
@@ -77,8 +81,11 @@ function worldForMathSkill(skill: number): WorldId {
   if (skill <= 19) return "pre-algebra";
   return "algebra-1";
 }
-function worldForEnglishSkill(skill: number): WorldId {
-  return skill <= 3 ? "arithmetic" : "integers";
+function gradeBandWorld(grade: string): WorldId {
+  const g = grade === "K" ? 0 : parseInt(grade, 10) || 0;
+  if (g <= 2) return "arithmetic";   // Grades K–2
+  if (g <= 5) return "integers";     // Grades 3–5
+  return "pre-algebra";              // Grades 6–8
 }
 function worldForReadingSkill(skill: number): WorldId {
   return skill <= 3 ? "pre-algebra" : "algebra-1";
@@ -126,8 +133,18 @@ function buildLadder(
   return levels;
 }
 
+// Flat unit ladder: one stage per CA-standard unit (K-8), for unit-based subjects.
+function buildUnitLadder(subject: Subject, units: LessonUnit[], offset: number): CatalogLevel[] {
+  return units.map((u, i) => ({
+    stage: offset + i + 1,
+    subject, tier: i + 1, stageInTier: 1, kind: "pure" as LevelKind,
+    skills: [i + 1], skillNames: [u.title],
+    world: gradeBandWorld(u.grade), difficulty: i + 1, isBoss: false,
+    grade: u.grade, standard: u.standard,
+  }));
+}
+
 const mathSkillName = (s: number) => SKILL_NAMES[s - 1] ?? `Skill ${s}`;
-const englishSkillName = (s: number) => ENGLISH_SKILL_NAMES[s - 1] ?? `Skill ${s}`;
 const readingSkillName = (s: number) => READING_SKILL_NAMES[s - 1] ?? `Skill ${s}`;
 const scienceSkillName = (s: number) => SCIENCE_SKILL_NAMES[s - 1] ?? `Skill ${s}`;
 
@@ -138,7 +155,7 @@ export function buildCatalog(): CatalogLevel[] {
   if (CATALOG) return CATALOG;
   CATALOG = [
     ...buildLadder("math", SKILL_NAMES.length, mathSkillName, worldForMathSkill, 0),
-    ...buildLadder("english", ENGLISH_SKILL_NAMES.length, englishSkillName, worldForEnglishSkill, ENGLISH_OFFSET),
+    ...buildUnitLadder("english", ENGLISH_UNITS, ENGLISH_OFFSET),
     ...buildLadder("reading", READING_SKILL_NAMES.length, readingSkillName, worldForReadingSkill, READING_OFFSET),
     ...buildLadder("science", SCIENCE_SKILL_NAMES.length, scienceSkillName, worldForScienceSkill, SCIENCE_OFFSET),
   ];

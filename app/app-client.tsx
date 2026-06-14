@@ -682,9 +682,10 @@ function PlayView(props: {
         animation: correct ? "yl-flash-good 1s ease" : undefined }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ ...pill, background: level.isBoss ? "#7f1d1d" : ACCENT }}>
-            {level.isBoss ? "BOSS" : Number.isInteger(level.difficulty) ? `Lv ${level.difficulty}` : `Lv ${Math.floor(level.difficulty)}½`}
+            {level.isBoss ? "BOSS" : level.grade ? `Grade ${level.grade}` : Number.isInteger(level.difficulty) ? `Lv ${level.difficulty}` : `Lv ${Math.floor(level.difficulty)}½`}
           </span>
-          <h2 style={{ margin: 0, fontSize: 17 }}>Stage {displayStage(level.stage)} · {levelTitle(level)}</h2>
+          <h2 style={{ margin: 0, fontSize: 17 }}>{level.grade ? levelTitle(level) : `Stage ${displayStage(level.stage)} · ${levelTitle(level)}`}</h2>
+          {level.standard && <span style={{ ...pill, background: "rgba(255,255,255,0.08)", color: "#94a3b8" }}>CA {level.standard}</span>}
         </div>
 
         {boss ? (

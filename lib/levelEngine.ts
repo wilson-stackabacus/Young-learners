@@ -94,6 +94,8 @@ function toLevelInfo(l: CatalogLevel): LevelInfo {
     difficulty: l.difficulty,
     isBoss: l.isBoss,
     ...(l.testsLevel !== undefined ? { testsLevel: l.testsLevel } : {}),
+    ...(l.grade !== undefined ? { grade: l.grade } : {}),
+    ...(l.standard !== undefined ? { standard: l.standard } : {}),
   };
 }
 
