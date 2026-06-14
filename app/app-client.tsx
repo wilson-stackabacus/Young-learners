@@ -22,6 +22,18 @@ interface LeaderboardResp { subject: Subject; leaderboard: Leader[]; currentUser
 const ACCENT = "#7c5cff";
 const CYAN = "#22d3ee";
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// Tiny sessionStorage cache so switching subjects/tabs renders instantly from
+// the browser instead of re-fetching every time. Keys are namespaced per
+// identity (see cacheKey) so one user never sees another's cached data.
+function cacheGet<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try { const v = sessionStorage.getItem(key); return v ? (JSON.parse(v) as T) : null; } catch { return null; }
+}
+function cacheSet(key: string, val: unknown): void {
+  if (typeof window === "undefined") return;
+  try { sessionStorage.setItem(key, JSON.stringify(val)); } catch { /* quota / private mode — ignore */ }
+}
 const glass: CSSProperties = {
   background: "rgba(19,23,34,0.55)",
   border: "1px solid rgba(255,255,255,0.08)",
@@ -67,7 +79,8 @@ export default function AppClient() {
   const [lastGain, setLastGain] = useState(0);
   const [busy, setBusy] = useState(false);
 
-  // login dialog
+  // intro + login dialogs
+  const [introOpen, setIntroOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
@@ -83,14 +96,28 @@ export default function AppClient() {
     return r.json() as Promise<T>;
   }, []);
 
-  const loadMap = useCallback(async (s: Subject) => {
+  // Cache keys are namespaced by who you currently are, so login/logout/guest
+  // switches never reuse the previous identity's cached map/me/leaderboard.
+  const cacheKey = useCallback((kind: string) => {
+    const id = tokenRef.current ? "t" + tokenRef.current.slice(-12) : guestRef.current ? "g" + guestRef.current : "demo";
+    return `yl.${kind}.${id}`;
+  }, []);
+
+  // cache-first: paint instantly from the browser, only hit the network when
+  // there's no cache or `fresh` is forced (e.g. after solving a problem).
+  const loadMap = useCallback(async (s: Subject, fresh = false) => {
+    const mk = cacheKey("map." + s), uk = cacheKey("me");
+    if (!fresh) {
+      const cm = cacheGet<MapResponse>(mk), cu = cacheGet<UserSummary>(uk);
+      if (cm && cu) { setMap(cm); setMe(cu); return; }
+    }
     const [m, u] = await Promise.all([
       api<MapResponse>(`/api/map?subject=${s}`),
       api<UserSummary>("/api/me"),
     ]);
-    setMap(m);
-    setMe(u);
-  }, [api]);
+    setMap(m); setMe(u);
+    cacheSet(mk, m); cacheSet(uk, u);
+  }, [api, cacheKey]);
 
   // auth subscription
   useEffect(() => {
@@ -113,11 +140,13 @@ export default function AppClient() {
   }, [subject, loadMap]);
 
   useEffect(() => {
-    if (tab === "leaderboard") {
-      setBoard(null);
-      api<LeaderboardResp>(`/api/leaderboard?subject=${subject}`).then(setBoard).catch(console.error);
-    }
-  }, [tab, subject, api]);
+    if (tab !== "leaderboard") return;
+    const k = cacheKey("lb." + subject);
+    setBoard(cacheGet<LeaderboardResp>(k)); // show cached instantly, then revalidate
+    api<LeaderboardResp>(`/api/leaderboard?subject=${subject}`)
+      .then((b) => { setBoard(b); cacheSet(k, b); })
+      .catch(console.error);
+  }, [tab, subject, api, cacheKey]);
 
   // ── game actions ──
   const openLevel = useCallback(async (stage: number) => {
@@ -153,12 +182,20 @@ export default function AppClient() {
     if (pendingNext) { setProblem(pendingNext); setPendingNext(null); setFeedback(null); setInput(""); setAttemptsRemaining(2); }
   }, [advanceStage, pendingNext, openLevel]);
 
-  const backToMap = useCallback(async () => { await loadMap(subject); setView("map"); }, [loadMap, subject]);
+  // Force-refresh on return from play — XP / stars / stage just changed.
+  const backToMap = useCallback(async () => { await loadMap(subject, true); setView("map"); }, [loadMap, subject]);
 
-  // ── login ──
+  // ── intro + login ──
+  // First visit → show the welcome/intro dialog (which then leads into login).
   useEffect(() => {
-    if (!localStorage.getItem("yl_has_visited")) setLoginOpen(true);
+    if (!localStorage.getItem("yl_has_visited")) setIntroOpen(true);
   }, []);
+
+  const closeIntro = useCallback(() => {
+    localStorage.setItem("yl_has_visited", "1");
+    setIntroOpen(false);
+  }, []);
+  const startFromIntro = useCallback(() => { closeIntro(); setLoginOpen(true); }, [closeIntro]);
 
   const closeLogin = useCallback(() => {
     localStorage.setItem("yl_has_visited", "1");
@@ -194,7 +231,7 @@ export default function AppClient() {
     <div style={{ padding: "12px 28px 60px", color: "#e2e8f0" }}>
       {/* ── Top bar ── */}
       <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>Young Learners</div>
+        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>Young Learners 4</div>
         <div style={{ ...seg, marginLeft: 8 }}>
           {(["math", "english", "reading", "science"] as Subject[]).map((s) => (
             <button key={s} onClick={() => setSubject(s)} style={segBtn(subject === s)}>{cap(s)}</button>
@@ -243,12 +280,51 @@ export default function AppClient() {
         <Leaderboard board={board} meId={me?.id} subject={subject} onSignUp={() => setLoginOpen(true)} />
       )}
 
+      {introOpen && <IntroDialog onStart={startFromIntro} onClose={closeIntro} />}
+
       {loginOpen && (
         <LoginDialog
           email={email} setEmail={setEmail} pw={pw} setPw={setPw} err={loginErr} busy={loginBusy}
           onEmail={doEmail} onGoogle={doGoogle} onGuest={continueAsGuest} onClose={closeLogin}
         />
       )}
+    </div>
+  );
+}
+
+// ── Intro / welcome ──
+function IntroDialog({ onStart, onClose }: { onStart: () => void; onClose: () => void }) {
+  const points: [string, string][] = [
+    ["Four subjects", "Math, English, Reading and Science — switch any time from the top."],
+    ["Level up by solving", "Clear a level's problems to fill the bar and unlock the next one."],
+    ["Hints, not dead-ends", "Miss a question and you get a hint, then a worked solution — never just “wrong.”"],
+    ["Earn XP & streaks", "Every correct answer earns XP; practice daily to grow your streak."],
+    ["Boss dragons & leaderboards", "Beat a dragon at the end of each stage and climb the per-subject leaderboard."],
+  ];
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(2,4,10,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...glass, width: 460, maxWidth: "100%", padding: 28 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: CYAN, letterSpacing: 1, textTransform: "uppercase" }}>Welcome to</div>
+        <h2 style={{ margin: "4px 0 6px", fontSize: 26, letterSpacing: -0.5 }}>Young Learners 4</h2>
+        <p style={{ margin: "0 0 18px", color: "#94a3b8", fontSize: 14 }}>An adaptive practice playground for grades K–8. Here&apos;s how it works:</p>
+        <div style={{ display: "grid", gap: 12, marginBottom: 22 }}>
+          {points.map(([title, body], i) => (
+            <div key={title} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ flex: "0 0 26px", height: 26, borderRadius: "50%", background: `${ACCENT}22`, color: "#c4b5fd", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13 }}>{i + 1}</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14.5 }}>{title}</div>
+                <div style={{ color: "#94a3b8", fontSize: 13, marginTop: 1 }}>{body}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={onStart} style={{ ...primaryBtn, width: "100%", marginBottom: 8 }}>Get started</button>
+        <div style={{ textAlign: "center" }}>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 13, cursor: "pointer", textDecoration: "underline" }}>
+            Explore first
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

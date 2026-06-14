@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 export const metadata: Metadata = {
-  title: "Young Learners",
+  title: "Young Learners 4",
   description: "Adaptive learning, gamified.",
 };
 
